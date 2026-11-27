@@ -5,6 +5,7 @@ import {
   evaluateIpChange,
   extractReportedIps,
   isValidDdnsDomain,
+  maskIpAddress,
   parsePendingIpState,
   serializePendingIpState,
   syncCloudflareDnsRecord
@@ -226,6 +227,65 @@ test('syncCloudflareDnsRecord handles missing env and DNS API failures safely', 
     assert.equal(failed.attempted, true);
     assert.equal(failed.ok, false);
     assert.equal(failed.error, 'Invalid token');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('maskIpAddress masks IPv4 and IPv6 addresses for privacy', () => {
+  assert.equal(maskIpAddress('127.0.12.34'), '127.0.*.*');
+  assert.equal(maskIpAddress('::ffff:198.51.100.42'), '198.51.*.*');
+  assert.equal(maskIpAddress('2001:db8:85a3::8a2e:370:7334'), '2001:db8:*:*');
+  assert.equal(maskIpAddress('invalid'), '');
+});
+
+test('evaluateIpChange masks IPs in notifications when ip_change_mask_ip is true without affecting DDNS real IP', async () => {
+  clearSiteSettingsCache();
+  const server = {
+    id: 'srv-mask-1',
+    name: 'Privacy-Node',
+    last_ipv4: '1.1.10.20',
+    last_ipv6: '',
+    pending_ip: '3.3.30.40',
+    pending_ip_count: 1,
+    ddns_enabled: '1',
+    ddns_domain: 'priv.example.com',
+    ddns_record_type: 'A'
+  };
+  const db = makeIpMonitorDb(server, {
+    jwt_secret: 'x'.repeat(32),
+    tg_bot_token: '123:tg',
+    tg_chat_id: '999',
+    notification_language: 'zh',
+    ip_change_mask_ip: 'true'
+  });
+  const env = { DB: db, CF_DNS_API_TOKEN: 'cf-token', CF_ZONE_ID: 'zone-1' };
+  const fetchCalls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    fetchCalls.push({ url: u, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+    if (u.includes('/dns_records?')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() { return { success: true, result: [{ id: 'rec-1', type: 'A', content: '1.1.10.20' }] }; }
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() { return { success: true }; },
+      async text() { return ''; }
+    };
+  };
+
+  try {
+    await evaluateIpChange(env, server, { ip_v4: '3.3.30.40' });
+    assert.equal(server.last_ipv4, '3.3.30.40');
+    assert.equal(fetchCalls[1].body.content, '3.3.30.40');
+    assert.match(fetchCalls[2].body.text, /1\.1\.\*\.\* -> 3\.3\.\*\.\*/);
+    assert.doesNotMatch(fetchCalls[2].body.text, /3\.3\.30\.40/);
   } finally {
     globalThis.fetch = originalFetch;
   }

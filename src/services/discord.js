@@ -1,11 +1,14 @@
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers } from '../utils/cache.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
-import { getWorkerLatestReportUpdates, getLatestReportSampleTimestamp } from '../utils/latestReportCache.js';
+import { getWorkerLatestReportUpdates } from '../utils/latestReportCache.js';
+import { getNotificationMessages } from './notificationMessages.js';
 import {
+  loadSettings,
   normalizeBooleanSetting,
   normalizeDiscordBotToken,
-  normalizeDiscordSnowflake
+  normalizeDiscordSnowflake,
+  normalizeNotificationTimezone
 } from '../utils/settings.js';
 import {
   NOTIFICATION_MAX_RETRIES,
@@ -71,32 +74,34 @@ export function resolveDiscordEmbedColor(context = {}) {
   return 0x5865f2;
 }
 
-export function buildDiscordAlertEmbed(context = {}, formattedMsg = '') {
+export function buildDiscordAlertEmbed(context = {}, formattedMsg = '', settings = {}) {
+  const labels = getNotificationMessages(settings)?.discord || {};
   const event = String(context.event || 'Notification').trim();
   const emoji = String(context.emoji || '').trim();
   const title = truncateText(`${emoji ? `${emoji} ` : ''}${event}`.trim(), 256);
-  const rawDescription = String(context.message || formattedMsg || '').trim();
+  const rawDescription = String(formattedMsg || context.message || '').trim();
   const description = truncateText(rawDescription || '-', 4096);
+  const footerText = truncateText(String(settings?.site_title || '').trim() || 'CF Server Monitor', 2048);
 
   const fields = [];
   const serverNames = String(context.client || context.clients || '').trim();
   if (serverNames) {
     fields.push({
-      name: 'Node / Server',
+      name: labels.node || 'Node / Server',
       value: truncateText(serverNames, 1024),
       inline: true
     });
   }
   if (event) {
     fields.push({
-      name: 'Event',
+      name: labels.event || 'Event',
       value: truncateText(event, 1024),
       inline: true
     });
   }
   if (context.time) {
     fields.push({
-      name: 'Time',
+      name: labels.time || 'Time',
       value: truncateText(String(context.time), 1024),
       inline: true
     });
@@ -118,7 +123,7 @@ export function buildDiscordAlertEmbed(context = {}, formattedMsg = '') {
     description,
     color: resolveDiscordEmbedColor(context),
     fields,
-    footer: { text: 'CF Server Monitor' },
+    footer: { text: footerText },
     timestamp: new Date().toISOString()
   };
 }
@@ -196,7 +201,7 @@ export async function sendDiscordBotNotification(settings, context = {}, formatt
   }
 
   const { token, channelId, userId } = validated;
-  const embed = buildDiscordAlertEmbed(context, formattedMsg);
+  const embed = buildDiscordAlertEmbed(context, formattedMsg, settings);
 
   try {
     let target = await resolveDiscordTargetChannelId(token, channelId, userId);
@@ -353,7 +358,37 @@ async function fetchStatusRealtimeMap(env, serverIds) {
   return map;
 }
 
-export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map(), realtimeMap = new Map(), now = Date.now()) {
+function renderDiscordTemplate(template, vars = {}) {
+  return String(template || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, key) => (
+    Object.prototype.hasOwnProperty.call(vars, key) ? String(vars[key] ?? '') : ''
+  ));
+}
+
+function formatStatusTimestamp(now = Date.now(), settings = {}) {
+  const date = new Date(now);
+  if (Number.isNaN(date.getTime())) return '';
+  const timeZone = normalizeNotificationTimezone(settings?.notification_timezone);
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    hour12: false,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).map(part => [part.type, part.value]));
+  return `${Number(parts.year)}/${Number(parts.month)}/${Number(parts.day)} ${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:${String(parts.second).padStart(2, '0')}`;
+}
+
+export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map(), realtimeMap = new Map(), now = Date.now(), settings = {}) {
+  const messages = getNotificationMessages(settings);
+  const labels = messages?.discord || {};
+  const siteTitle = String(settings?.site_title || '').trim();
+  const customTemplate = String(settings?.discord_status_template || '').trim();
+
   let onlineCount = 0;
   let offlineCount = 0;
   const nodeEntries = [];
@@ -382,17 +417,46 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
     const ramTotal = Number(merged.ram_total || 0);
     const ramUsed = Number(merged.ram_used || 0);
     const ramPct = ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0.0';
+    const diskTotal = Number(merged.disk_total || 0);
+    const diskUsed = Number(merged.disk_used || 0);
+    const diskPct = diskTotal > 0 ? ((diskUsed / diskTotal) * 100).toFixed(1) : '0.0';
     const down = formatBytesPerSecond(merged.net_in_speed);
     const up = formatBytesPerSecond(merged.net_out_speed);
     const uptime = formatDuration(resolveUptimeSeconds(merged, effectiveMetrics, now));
-    const region = merged.region ? ` [${String(merged.region).toUpperCase()}]` : '';
+    const regionCode = merged.region ? String(merged.region).toUpperCase() : '';
+    const regionTag = regionCode ? ` [${regionCode}]` : '';
+    const statusIcon = isOnline ? '🟢' : '🔴';
+    const statusText = isOnline ? (labels.online || 'Online') : (labels.offline || 'Offline');
+    const lastSeenText = lastTs > 0
+      ? (typeof labels.lastSeen === 'function' ? labels.lastSeen(formatDuration((now - lastTs) / 1000)) : `${formatDuration((now - lastTs) / 1000)} ago`)
+      : (labels.noReport || 'No report');
+    const defaultDetail = isOnline
+      ? `CPU: **${cpu}%** | RAM: **${ramPct}%**\nNet: ↓${down} ↑${up} | Up: **${uptime}**`
+      : `${labels.offline || 'Offline'} · ${lastSeenText}`;
 
     nodeEntries.push({
       isOnline,
-      name: truncateText(`${isOnline ? '🟢' : '🔴'} ${merged.name || serverId}${region}`, 256),
-      value: isOnline
-        ? `CPU: **${cpu}%** | RAM: **${ramPct}%**\nNet: ↓${down} ↑${up} | Up: **${uptime}**`
-        : `Offline · ${lastTs > 0 ? `Last seen ${formatDuration((now - lastTs) / 1000)} ago` : 'No report'}`
+      name: truncateText(`${statusIcon} ${merged.name || serverId}${regionTag}`, 256),
+      defaultValue: defaultDetail,
+      vars: {
+        id: serverId,
+        name: merged.name || serverId,
+        group: merged.server_group || '',
+        region: regionCode,
+        region_tag: regionTag,
+        status_icon: statusIcon,
+        status: statusText,
+        cpu,
+        ram: ramPct,
+        ram_used: String(Math.round(ramUsed)),
+        ram_total: String(Math.round(ramTotal)),
+        disk: diskPct,
+        net_in: down,
+        net_out: up,
+        uptime,
+        last_seen: lastSeenText,
+        detail: defaultDetail
+      }
     });
   }
 
@@ -405,8 +469,39 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
     color = 0xf59e0b;
   }
 
-  const title = '🖥️ Server Status Overview';
-  const summaryLine = `Total: **${servers.length}** | 🟢 Online: **${onlineCount}** | 🔴 Offline: **${offlineCount}**`;
+  const footerText = truncateText(siteTitle || 'CF Server Monitor', 2048);
+  const topVars = {
+    site_title: siteTitle || 'CF Server Monitor',
+    total: String(servers.length),
+    online: String(onlineCount),
+    offline: String(offlineCount),
+    time: formatStatusTimestamp(now, settings)
+  };
+
+  // 完整自定义模板：包含 {{#servers}}...{{/servers}} 循环块
+  const loopMatch = customTemplate.match(/\{\{\s*#servers\s*\}\}([\s\S]*?)\{\{\s*\/servers\s*\}\}/);
+  if (customTemplate && loopMatch) {
+    const itemTemplate = loopMatch[1].replace(/^\r?\n/, '').replace(/\r?\n$/, '');
+    const renderedItems = nodeEntries.length > 0
+      ? nodeEntries.map(entry => renderDiscordTemplate(itemTemplate, { ...topVars, ...entry.vars })).join('\n')
+      : (labels.noServers || 'No visible servers configured.');
+    const renderedBody = renderDiscordTemplate(
+      customTemplate.replace(loopMatch[0], renderedItems),
+      topVars
+    ).trim();
+
+    return {
+      title: truncateText(`🖥️ ${siteTitle || labels.statusTitle || 'Server Status Overview'}`, 256),
+      description: truncateText(renderedBody || (labels.noServers || 'No visible servers configured.'), 4096),
+      color,
+      fields: [],
+      footer: { text: footerText },
+      timestamp: new Date(now).toISOString()
+    };
+  }
+
+  const title = truncateText(`🖥️ ${labels.statusTitle || 'Server Status Overview'}`, 256);
+  const summaryLine = `${labels.total || 'Total'}: **${servers.length}** | 🟢 ${labels.online || 'Online'}: **${onlineCount}** | 🔴 ${labels.offline || 'Offline'}: **${offlineCount}**`;
   const fields = [];
   let charBudget = DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - summaryLine.length - 64;
   let overflowCount = 0;
@@ -416,7 +511,10 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
       overflowCount++;
       continue;
     }
-    const fieldCost = entry.name.length + entry.value.length;
+    const renderedValue = customTemplate
+      ? truncateText(renderDiscordTemplate(customTemplate, { ...topVars, ...entry.vars }).trim() || entry.defaultValue, 1024)
+      : entry.defaultValue;
+    const fieldCost = entry.name.length + renderedValue.length;
     if (charBudget - fieldCost < 0) {
       overflowCount++;
       continue;
@@ -424,16 +522,19 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
     charBudget -= fieldCost;
     fields.push({
       name: entry.name,
-      value: entry.value,
+      value: renderedValue,
       inline: false
     });
   }
 
   let description = summaryLine;
   if (servers.length === 0) {
-    description = `${summaryLine}\n\nNo visible servers configured.`;
+    description = `${summaryLine}\n\n${labels.noServers || 'No visible servers configured.'}`;
   } else if (overflowCount > 0) {
-    description = `${summaryLine}\n\n*+${overflowCount} more node(s) omitted to fit Discord embed limits.*`;
+    const omittedText = typeof labels.omitted === 'function'
+      ? labels.omitted(overflowCount)
+      : `+${overflowCount} more node(s) omitted to fit Discord embed limits.`;
+    description = `${summaryLine}\n\n*${omittedText}*`;
   }
 
   return {
@@ -441,7 +542,7 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
     description: truncateText(description, 4096),
     color,
     fields,
-    footer: { text: 'CF Server Monitor' },
+    footer: { text: footerText },
     timestamp: new Date(now).toISOString()
   };
 }
@@ -487,13 +588,16 @@ export async function handleDiscordInteraction(request, env) {
     const commandName = String(interaction?.data?.name || '').toLowerCase();
     if (commandName === 'status') {
       try {
-        const servers = await getAllServers(env.DB, false);
+        const [servers, settings] = await Promise.all([
+          getAllServers(env.DB, false),
+          loadSettings(env.DB)
+        ]);
         const serverIds = servers.map(server => String(server.id || '')).filter(Boolean);
         const [latestMetricsMap, realtimeMap] = await Promise.all([
           getLatestMetricsForAllServers(env.DB),
           fetchStatusRealtimeMap(env, serverIds)
         ]);
-        const embed = buildStatusCommandEmbed(servers, latestMetricsMap, realtimeMap, Date.now());
+        const embed = buildStatusCommandEmbed(servers, latestMetricsMap, realtimeMap, Date.now(), settings);
         return jsonResponse({
           type: 4,
           data: {

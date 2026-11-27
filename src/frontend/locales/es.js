@@ -605,4 +605,9 @@ export default {
   ddnsRecordType: 'Tipo de registro DNS',
   ddnsDomainRequired: 'El dominio DDNS es obligatorio cuando DDNS está activado',
   invalidDdnsDomain: 'Formato de dominio DDNS no válido',
+  discordStatusTemplate: 'Plantilla de respuesta /status (Opcional)',
+  discordStatusTemplateTip: 'Personaliza el formato de /status. Admite {{status_icon}}, {{status}}, {{name}}, {{region}}, {{group}}, {{cpu}}, {{ram}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{net_in}}, {{net_out}}, {{uptime}}, {{last_seen}}, {{detail}}, o bucle {{#servers}}...{{/servers}} con {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
+  discordStatusTemplatePlaceholder: 'Déjalo vacío para usar el formato predeterminado, p. ej. CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
+  ipChangeMaskIp: 'Ocultar IP completas en alertas de cambio de IP (p. ej. 127.0.*.*)',
+  ipChangeMaskIpTip: 'Si está activo, oculta los últimos segmentos en las notificaciones (IPv4 -> a.b.*.*, IPv6 -> a:b:*:*). Cloudflare DDNS sigue usando la IP real.',
 }

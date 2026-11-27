@@ -605,4 +605,9 @@ export default {
   ddnsRecordType: '解析记录类型',
   ddnsDomainRequired: '启用 DDNS 时必须填写绑定域名',
   invalidDdnsDomain: 'DDNS 域名格式无效',
+  discordStatusTemplate: '/status 回复模板（可选）',
+  discordStatusTemplateTip: '自定义 /status 节点展示格式。支持变量 {{status_icon}}、{{status}}、{{name}}、{{region}}、{{group}}、{{cpu}}、{{ram}}、{{ram_used}}、{{ram_total}}、{{disk}}、{{net_in}}、{{net_out}}、{{uptime}}、{{last_seen}}、{{detail}}，或使用 {{#servers}}...{{/servers}} 循环搭配 {{total}}、{{online}}、{{offline}}、{{time}}、{{site_title}}。',
+  discordStatusTemplatePlaceholder: '留空使用默认卡片；可填单节点格式如 CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
+  ipChangeMaskIp: 'IP 变更通知隐藏完整 IP（如 127.0.*.*）',
+  ipChangeMaskIpTip: '开启后，节点 IP 变更告警只展示脱敏网段（IPv4 为 a.b.*.*，IPv6 为 a:b:*:*），不影响 Cloudflare DDNS 自动更新真实 IP。',
 }

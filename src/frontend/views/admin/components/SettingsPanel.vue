@@ -457,6 +457,21 @@
               >
             </div>
           </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">
+                {{ trans.discordStatusTemplate }}
+                <HelpTooltip :text="trans.discordStatusTemplateTip" />
+              </label>
+              <textarea
+                v-model="settings.discord_status_template"
+                class="form-textarea"
+                rows="4"
+                :placeholder="trans.discordStatusTemplatePlaceholder"
+              ></textarea>
+            </div>
+          </div>
         </div>
 
         <div v-else class="resource-alert-rule">
@@ -586,6 +601,14 @@
               rows="5"
               placeholder="{{emoji}}【CF Server Monitor】{{event}}\n\n{{message}}\n\n{{time}}"
             ></textarea>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group flex-1 checkbox-item">
+            <input type="checkbox" id="cfg_ip_change_mask_ip" v-model="settings.ip_change_mask_ip">
+            <label for="cfg_ip_change_mask_ip">{{ trans.ipChangeMaskIp }}</label>
+            <HelpTooltip :text="trans.ipChangeMaskIpTip" />
           </div>
         </div>
 

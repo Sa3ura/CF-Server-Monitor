@@ -605,4 +605,9 @@ export default {
   ddnsRecordType: 'DNS Record Type',
   ddnsDomainRequired: 'DDNS domain is required when DDNS is enabled',
   invalidDdnsDomain: 'Invalid DDNS domain format',
+  discordStatusTemplate: '/status Reply Template (Optional)',
+  discordStatusTemplateTip: 'Customize /status node formatting. Supports {{status_icon}}, {{status}}, {{name}}, {{region}}, {{group}}, {{cpu}}, {{ram}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{net_in}}, {{net_out}}, {{uptime}}, {{last_seen}}, {{detail}}, or full {{#servers}}...{{/servers}} loop with {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
+  discordStatusTemplatePlaceholder: 'Leave empty for default Embeds, or enter e.g. CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
+  ipChangeMaskIp: 'Mask IPs in IP change alerts (e.g. 127.0.*.*)',
+  ipChangeMaskIpTip: 'When enabled, IP change notifications hide the last segments (IPv4 -> a.b.*.*, IPv6 -> a:b:*:*). Cloudflare DDNS sync still uses the real IP.',
 }

@@ -605,4 +605,9 @@ export default {
   ddnsRecordType: 'Jenis Data DNS',
   ddnsDomainRequired: 'Domain DDNS wajib diisi saat DDNS diaktifkan',
   invalidDdnsDomain: 'Format domain DDNS tidak valid',
+  discordStatusTemplate: 'Templat Balasan /status (Opsional)',
+  discordStatusTemplateTip: 'Sesuaikan format tampilan node /status. Mendukung {{status_icon}}, {{status}}, {{name}}, {{region}}, {{group}}, {{cpu}}, {{ram}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{net_in}}, {{net_out}}, {{uptime}}, {{last_seen}}, {{detail}}, atau loop {{#servers}}...{{/servers}} dengan {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
+  discordStatusTemplatePlaceholder: 'Kosongkan untuk Embed default, mis. CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
+  ipChangeMaskIp: 'Samarkan IP pada notifikasi perubahan IP (mis. 127.0.*.*)',
+  ipChangeMaskIpTip: 'Jika aktif, notifikasi hanya menampilkan sebagian IP (IPv4 -> a.b.*.*, IPv6 -> a:b:*:*). Sinkronisasi DDNS Cloudflare tetap memakai IP asli.',
 }

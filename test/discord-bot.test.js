@@ -10,6 +10,7 @@ import {
 } from '../src/services/discord.js';
 import { sendNotification } from '../src/services/notification.js';
 import { clearAllCaches } from '../src/utils/cache.js';
+import { clearAppearanceSettingsCache, clearSiteSettingsCache } from '../src/utils/settings.js';
 
 function bytesToHex(buffer) {
   return Array.from(new Uint8Array(buffer))
@@ -167,7 +168,13 @@ test('/status slash command returns Embeds for non-hidden servers and omits hidd
     }]
   ]);
 
-  const db = makeDiscordMockDb({ servers, metricsById });
+  const db = makeDiscordMockDb({
+    servers,
+    metricsById,
+    settings: { notification_language: 'en' }
+  });
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
   const env = { DISCORD_PUBLIC_KEY: publicKeyHex, DB: db };
   const body = JSON.stringify({ type: 2, data: { name: 'status' } });
   const ts = '1700000100';
@@ -296,12 +303,76 @@ test('Discord Bot outbound notification prefers DM channel when discord_user_id 
   }
 });
 
-test('buildDiscordAlertEmbed maps green color for recovery/test events', () => {
+test('buildDiscordAlertEmbed uses formatted notification template and localized labels', () => {
   const embed = buildDiscordAlertEmbed({
-    event: 'Test Notification',
+    event: '测试通知',
     emoji: '✅',
-    clients: ['CF Server Monitor']
-  }, 'Test ok');
+    clients: ['Node-1'],
+    message: 'raw message',
+    time: '2026/11/27 12:00:00'
+  }, '自定义通知模板正文', {
+    notification_language: 'zh',
+    site_title: 'My Monitor'
+  });
   assert.equal(embed.color, 0x22c55e);
-  assert.equal(embed.footer.text, 'CF Server Monitor');
+  assert.equal(embed.description, '自定义通知模板正文');
+  assert.equal(embed.fields[0].name, '节点');
+  assert.equal(embed.fields[1].name, '事件');
+  assert.equal(embed.fields[2].name, '时间');
+  assert.equal(embed.footer.text, 'My Monitor');
+});
+
+test('/status supports custom per-node template and {{#servers}} loop template', async () => {
+  clearAllCaches();
+  const { privateKey, publicKeyHex } = await createEd25519TestKeys();
+  const now = Date.now();
+  const servers = [
+    { id: 'srv-1', name: 'HK-01', region: 'hk', server_group: 'Prod', is_hidden: '0', sort_order: 0, history_partition_id: 1, timestamp: 0 }
+  ];
+  const metricsById = new Map([
+    ['srv-1', { timestamp: now - 5_000, cpu: 12.5, ram_used: 1024, ram_total: 2048, net_in_speed: 2048, net_out_speed: 1024, uptime: 3660 }]
+  ]);
+
+  // 1) Per-node template
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
+  const dbPerNode = makeDiscordMockDb({
+    servers,
+    metricsById,
+    settings: {
+      notification_language: 'zh',
+      discord_status_template: '[{{group}}] {{status}} | CPU {{cpu}}% | RAM {{ram}}% | 上行 {{net_out}}'
+    }
+  });
+  const body = JSON.stringify({ type: 2, data: { name: 'status' } });
+  const ts = '1700000200';
+  const sig = await signInteraction(privateKey, ts, body);
+
+  const res1 = await handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': sig, 'X-Signature-Timestamp': ts },
+    body
+  }), { DISCORD_PUBLIC_KEY: publicKeyHex, DB: dbPerNode });
+  const json1 = await res1.json();
+  assert.equal(json1.data.embeds[0].fields[0].value, '[Prod] 在线 | CPU 12.5% | RAM 50.0% | 上行 1.0 KB/s');
+
+  // 2) Full {{#servers}} loop template
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
+  const dbLoop = makeDiscordMockDb({
+    servers,
+    metricsById,
+    settings: {
+      notification_language: 'zh',
+      discord_status_template: '总计 {{total}} 台（在线 {{online}}）：\n{{#servers}}- {{status_icon}} {{name}}{{region_tag}}：CPU {{cpu}}% / 内存 {{ram}}%\n{{/servers}}'
+    }
+  });
+  const res2 = await handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': sig, 'X-Signature-Timestamp': ts },
+    body
+  }), { DISCORD_PUBLIC_KEY: publicKeyHex, DB: dbLoop });
+  const json2 = await res2.json();
+  assert.equal(json2.data.embeds[0].fields.length, 0);
+  assert.equal(json2.data.embeds[0].description, '总计 1 台（在线 1）：\n- 🟢 HK-01 [HK]：CPU 12.5% / 内存 50.0%');
 });

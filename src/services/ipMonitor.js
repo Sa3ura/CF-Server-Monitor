@@ -1,6 +1,6 @@
 import { normalizeClientIp } from '../utils/metrics.js';
 import { isEnabledFlag } from '../utils/serverBilling.js';
-import { loadSiteSettings } from '../utils/settings.js';
+import { loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
 import { hasNotificationTarget, sendNotification } from './notification.js';
 import { getNotificationMessages } from './notificationMessages.js';
 
@@ -22,6 +22,31 @@ export function isValidDdnsDomain(value) {
 export function normalizeDdnsRecordType(value) {
   const upper = String(value ?? '').trim().toUpperCase();
   return ALLOWED_DDNS_RECORD_TYPES.includes(upper) ? upper : 'AUTO';
+}
+
+function expandIpv6Address(ip) {
+  const halves = String(ip || '').split('::');
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0].split(':').filter(Boolean) : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':').filter(Boolean) : [];
+  const missing = 8 - (left.length + right.length);
+  if (missing < 0) return null;
+  return [...left, ...Array(missing).fill('0'), ...right].slice(0, 8);
+}
+
+export function maskIpAddress(value) {
+  const parsed = normalizeClientIp(value);
+  if (!parsed) return '';
+  if (parsed.family === 'v4') {
+    const parts = parsed.value.split('.');
+    return parts.length === 4 ? `${parts[0]}.${parts[1]}.*.*` : parsed.value;
+  }
+  const groups = expandIpv6Address(parsed.value);
+  if (groups && groups.length >= 2) {
+    return `${groups[0]}:${groups[1]}:*:*`;
+  }
+  const rawParts = parsed.value.split(':').filter(Boolean);
+  return rawParts.length >= 2 ? `${rawParts[0]}:${rawParts[1]}:*:*` : '*:*:*:*';
 }
 
 export function extractReportedIps(metrics = {}, fallbackClientIp = '') {
@@ -247,10 +272,13 @@ async function runIpChangeSideEffects(env, server, changes) {
 
   const messages = getNotificationMessages(settings);
   const serverName = server.name || server.id;
+  const shouldMaskIp = normalizeBooleanSetting(settings?.ip_change_mask_ip) === 'true';
 
   const lines = [];
   const embedFields = [];
   for (const item of enrichedChanges) {
+    const displayOldIp = shouldMaskIp ? (maskIpAddress(item.oldIp) || item.oldIp) : item.oldIp;
+    const displayNewIp = shouldMaskIp ? (maskIpAddress(item.newIp) || item.newIp) : item.newIp;
     let ddnsSuffix = '';
     if (item.ddnsResult?.attempted) {
       ddnsSuffix = item.ddnsResult.ok
@@ -260,15 +288,15 @@ async function runIpChangeSideEffects(env, server, changes) {
     const detailLine = typeof messages.ipChangeDetail === 'function'
       ? messages.ipChangeDetail({
           protocol: item.protocol,
-          oldIp: item.oldIp,
-          newIp: item.newIp,
+          oldIp: displayOldIp,
+          newIp: displayNewIp,
           ddnsStatus: ddnsSuffix
         })
-      : `${item.protocol}: ${item.oldIp} -> ${item.newIp}${ddnsSuffix}`;
+      : `${item.protocol}: ${displayOldIp} -> ${displayNewIp}${ddnsSuffix}`;
     lines.push(`${serverName}  ${detailLine}`);
     embedFields.push({
       name: `${item.protocol} (${item.recordType})`,
-      value: `\`${item.oldIp}\` → \`${item.newIp}\`${ddnsSuffix}`,
+      value: `\`${displayOldIp}\` → \`${displayNewIp}\`${ddnsSuffix}`,
       inline: false
     });
   }

@@ -22,6 +22,19 @@ const NOTIFICATION_MESSAGES = {
     daysLeft: days => `剩余${days}天`,
     ipChangeDetail: ({ protocol, oldIp, newIp, ddnsStatus = '' }) =>
       `${protocol}: ${oldIp} -> ${newIp}${ddnsStatus}`,
+    discord: {
+      node: '节点',
+      event: '事件',
+      time: '时间',
+      statusTitle: '服务器状态总览',
+      total: '总计',
+      online: '在线',
+      offline: '离线',
+      noServers: '暂无可见服务器。',
+      noReport: '无上报记录',
+      lastSeen: duration => `${duration}前`,
+      omitted: count => `另有 ${count} 台节点因超过卡片长度限制未展示。`
+    },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `本月已用 ${usedGb} GB / 限额 ${limitGb} GB（${percent}% ≥ ${threshold}%）`,
     testMessage: '这是一条来自 CF Server Monitor 的测试消息。'
@@ -47,6 +60,19 @@ const NOTIFICATION_MESSAGES = {
     daysLeft: days => `剩餘${days}天`,
     ipChangeDetail: ({ protocol, oldIp, newIp, ddnsStatus = '' }) =>
       `${protocol}: ${oldIp} -> ${newIp}${ddnsStatus}`,
+    discord: {
+      node: '節點',
+      event: '事件',
+      time: '時間',
+      statusTitle: '伺服器狀態總覽',
+      total: '總計',
+      online: '線上',
+      offline: '離線',
+      noServers: '暫無可見伺服器。',
+      noReport: '無上報記錄',
+      lastSeen: duration => `${duration}前`,
+      omitted: count => `另有 ${count} 台節點因超過卡片長度限制未展示。`
+    },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `本月已用 ${usedGb} GB / 限額 ${limitGb} GB（${percent}% ≥ ${threshold}%）`,
     testMessage: '這是一條來自 CF Server Monitor 的測試訊息。'
@@ -72,6 +98,19 @@ const NOTIFICATION_MESSAGES = {
     daysLeft: days => `${days} ${days === 1 ? 'day' : 'days'} left`,
     ipChangeDetail: ({ protocol, oldIp, newIp, ddnsStatus = '' }) =>
       `${protocol}: ${oldIp} -> ${newIp}${ddnsStatus}`,
+    discord: {
+      node: 'Node / Server',
+      event: 'Event',
+      time: 'Time',
+      statusTitle: 'Server Status Overview',
+      total: 'Total',
+      online: 'Online',
+      offline: 'Offline',
+      noServers: 'No visible servers configured.',
+      noReport: 'No report',
+      lastSeen: duration => `Last seen ${duration} ago`,
+      omitted: count => `+${count} more node(s) omitted to fit Discord embed limits.`
+    },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Used ${usedGb} GB of ${limitGb} GB this month (${percent}% ≥ ${threshold}%)`,
     testMessage: 'This is a test message from CF Server Monitor.'
@@ -97,6 +136,19 @@ const NOTIFICATION_MESSAGES = {
     daysLeft: days => `残り${days}日`,
     ipChangeDetail: ({ protocol, oldIp, newIp, ddnsStatus = '' }) =>
       `${protocol}: ${oldIp} -> ${newIp}${ddnsStatus}`,
+    discord: {
+      node: 'ノード',
+      event: 'イベント',
+      time: '時刻',
+      statusTitle: 'サーバーステータス概要',
+      total: '合計',
+      online: 'オンライン',
+      offline: 'オフライン',
+      noServers: '表示可能なサーバーはありません。',
+      noReport: '報告なし',
+      lastSeen: duration => `${duration}前`,
+      omitted: count => `他 ${count} 台は Embed 文字数制限のため省略されました。`
+    },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `今月 ${usedGb} GB / 上限 ${limitGb} GB 使用（${percent}% ≥ ${threshold}%）`,
     testMessage: 'これは CF Server Monitor からのテストメッセージです。'
@@ -122,6 +174,19 @@ const NOTIFICATION_MESSAGES = {
     daysLeft: days => `Sisa ${days} hari`,
     ipChangeDetail: ({ protocol, oldIp, newIp, ddnsStatus = '' }) =>
       `${protocol}: ${oldIp} -> ${newIp}${ddnsStatus}`,
+    discord: {
+      node: 'Node / Server',
+      event: 'Acara',
+      time: 'Waktu',
+      statusTitle: 'Ringkasan Status Server',
+      total: 'Total',
+      online: 'Online',
+      offline: 'Offline',
+      noServers: 'Tidak ada server yang terlihat.',
+      noReport: 'Tidak ada laporan',
+      lastSeen: duration => `Terakhir dilihat ${duration} lalu`,
+      omitted: count => `+${count} node lainnya disembunyikan karena batas panjang Embed.`
+    },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Terpakai ${usedGb} GB dari ${limitGb} GB bulan ini (${percent}% ≥ ${threshold}%)`,
     testMessage: 'Ini adalah pesan uji dari CF Server Monitor.'
@@ -147,6 +212,19 @@ const NOTIFICATION_MESSAGES = {
     daysLeft: days => (days === 1 ? '1 jour restant' : `${days} jours restants`),
     ipChangeDetail: ({ protocol, oldIp, newIp, ddnsStatus = '' }) =>
       `${protocol}: ${oldIp} -> ${newIp}${ddnsStatus}`,
+    discord: {
+      node: 'Nœud / Serveur',
+      event: 'Événement',
+      time: 'Heure',
+      statusTitle: 'État des serveurs',
+      total: 'Total',
+      online: 'En ligne',
+      offline: 'Hors ligne',
+      noServers: 'Aucun serveur visible configuré.',
+      noReport: 'Aucun rapport',
+      lastSeen: duration => `Vu il y a ${duration}`,
+      omitted: count => `+${count} autre(s) nœud(s) omis en raison de la limite Embed.`
+    },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `${usedGb} Go sur ${limitGb} Go utilisés ce mois-ci (${percent}% ≥ ${threshold}%)`,
     testMessage: 'Ceci est un message de test de CF Server Monitor.'
@@ -172,6 +250,19 @@ const NOTIFICATION_MESSAGES = {
     daysLeft: days => (days === 1 ? 'Queda 1 día' : `Quedan ${days} días`),
     ipChangeDetail: ({ protocol, oldIp, newIp, ddnsStatus = '' }) =>
       `${protocol}: ${oldIp} -> ${newIp}${ddnsStatus}`,
+    discord: {
+      node: 'Nodo / Servidor',
+      event: 'Evento',
+      time: 'Hora',
+      statusTitle: 'Resumen de estado del servidor',
+      total: 'Total',
+      online: 'En línea',
+      offline: 'Fuera de línea',
+      noServers: 'No hay servidores visibles configurados.',
+      noReport: 'Sin reportes',
+      lastSeen: duration => `Visto hace ${duration}`,
+      omitted: count => `+${count} nodo(s) omitido(s) por el límite de Discord Embed.`
+    },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Usados ${usedGb} GB de ${limitGb} GB este mes (${percent}% ≥ ${threshold}%)`,
     testMessage: 'Este es un mensaje de prueba de CF Server Monitor.'
