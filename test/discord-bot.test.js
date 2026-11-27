@@ -11,6 +11,8 @@ import {
   sendDiscordBotNotification,
   verifyDiscordSignature
 } from '../src/services/discord.js';
+import { handleAdminAPI } from '../src/handlers/admin.js';
+import { generateToken } from '../src/middleware/auth.js';
 import { sendNotification } from '../src/services/notification.js';
 import { clearAllCaches } from '../src/utils/cache.js';
 import { clearAppearanceSettingsCache, clearSiteSettingsCache } from '../src/utils/settings.js';
@@ -40,7 +42,7 @@ async function signInteraction(privateKey, timestamp, rawBody) {
   return bytesToHex(sig);
 }
 
-function makeDiscordMockDb({ servers = [], metricsById = new Map(), settings = {} } = {}) {
+function makeDiscordMockDb({ servers = [], metricsById = new Map(), settings = {}, appearance = null } = {}) {
   return {
     prepare(sql) {
       return {
@@ -49,6 +51,9 @@ function makeDiscordMockDb({ servers = [], metricsById = new Map(), settings = {
         async first() {
           if (sql.includes("key = 'site_options'")) {
             return { value: JSON.stringify(settings) };
+          }
+          if (sql.includes("key = 'appearance_options'") && appearance) {
+            return { value: JSON.stringify(appearance) };
           }
           return null;
         },
@@ -449,4 +454,45 @@ test('/status supports custom per-node template and {{#servers}} loop template',
   const json2 = await res2.json();
   assert.equal(json2.data.embeds[0].fields.length, 0);
   assert.equal(json2.data.embeds[0].description, '总计 1 台（在线 1）：\n- 🟢 HK-01 [HK]：CPU 12.5% / 内存 50.0%');
+});
+
+test('send_test_notification reads site_title from appearance_options without ReferenceError', async () => {
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
+  const sys = { password: 'hash', jwt_secret: 'x'.repeat(32) };
+  const db = makeDiscordMockDb({
+    appearance: { site_title: 'Yori Panel' }
+  });
+  const env = { API_SECRET: 'secret', DB: db };
+  const token = await generateToken(env, sys);
+
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), body: options.body ? JSON.parse(options.body) : null });
+    return { ok: true, status: 200, async json() { return { id: 'msg-test' }; } };
+  };
+
+  try {
+    const res = await handleAdminAPI(new Request('https://monitor.example.com/admin/api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        action: 'send_test_notification',
+        discord_bot_enabled: 'true',
+        discord_bot_token: 'bot-token',
+        discord_channel_id: '123456789012345678',
+        notification_language: 'zh',
+        notification_template: '{{message}}'
+      })
+    }), env, sys);
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.equal(json.success, true);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].body.embeds[0].footer.text, 'Yori Panel');
+    assert.equal(requests[0].body.embeds[0].fields[0].value, 'Yori Panel');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

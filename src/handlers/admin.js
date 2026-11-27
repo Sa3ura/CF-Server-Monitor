@@ -710,7 +710,7 @@ async function handleD1UsageAction({ data, sys }) {
   }
 }
 
-async function handleSendTestNotificationAction({ data }) {
+async function handleSendTestNotificationAction({ data, env }) {
   const {
     tg_bot_token,
     tg_chat_id,
