@@ -472,6 +472,22 @@
               ></textarea>
             </div>
           </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                <button
+                  type="button"
+                  class="btn btn-sm"
+                  :disabled="discordCommandSyncLoading || !settings.discord_bot_token"
+                  @click="$emit('sync-discord-commands')"
+                >
+                  {{ discordCommandSyncLoading ? '⏳' : '⚡' }} {{ discordCommandSyncLoading ? trans.syncingDiscordCommands : trans.syncDiscordCommands }}
+                </button>
+                <HelpTooltip :text="trans.syncDiscordCommandsTip" />
+              </div>
+            </div>
+          </div>
         </div>
 
         <div v-else class="resource-alert-rule">
@@ -1010,13 +1026,14 @@ const props = defineProps({
   saving: { type: Boolean, default: false },
   changeAdminPassword: { type: Boolean, default: false },
   testNotificationLoading: { type: Boolean, default: false },
+  discordCommandSyncLoading: { type: Boolean, default: false },
   d1UsageLoading: { type: Boolean, default: false }
 })
 
 const emit = defineEmits([
   'toggle-password', 'toggle-admin-password-change',
   'save-settings', 'upload-bg', 'upload-bg-mobile', 'upload-favicon',
-  'send-test-notification', 'query-d1-usage',
+  'send-test-notification', 'sync-discord-commands', 'query-d1-usage',
   'alert-message'
 ])
 

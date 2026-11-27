@@ -610,4 +610,9 @@ export default {
   discordStatusTemplatePlaceholder: '空欄でデフォルト表示。例: CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'IP 変更通知で IP をマスク表示する（例: 216.*.*.171）',
   ipChangeMaskIpTip: '有効にすると通知内の IP の中間セグメントをマスクします（IPv4 は a.*.*.d、IPv6 は a:*:*:h）。Cloudflare DDNS の更新には実際の IP が使用されます。',
+  syncDiscordCommands: 'スラッシュコマンドを同期',
+  syncingDiscordCommands: '同期中...',
+  syncDiscordCommandsTip: 'ローカルスクリプトを使わずに Workers から直接 Discord へ全コマンド（/status, /node, /traffic, /expire, /ping）を登録・更新します。',
+  discordCommandsSynced: 'Discord スラッシュコマンドを同期しました: {commands}',
+  discordCommandsSyncFailed: 'Discord スラッシュコマンドの同期に失敗しました',
 }

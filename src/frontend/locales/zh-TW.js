@@ -610,4 +610,9 @@ export default {
   discordStatusTemplatePlaceholder: '留空使用預設卡片；可填單節點格式如 CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'IP 變更通知隱藏完整 IP（如 216.*.*.171）',
   ipChangeMaskIpTip: '開啟後，節點 IP 變更告警僅顯示遮罩網段（IPv4 為 a.*.*.d，IPv6 為 a:*:*:h），不影響 Cloudflare DDNS 自動更新真實 IP。',
+  syncDiscordCommands: '同步斜線指令',
+  syncingDiscordCommands: '同步中...',
+  syncDiscordCommandsTip: '由 Worker 服務端直接向 Discord 註冊或更新全部斜線指令（/status、/node、/traffic、/expire、/ping），無需在本機執行腳本。',
+  discordCommandsSynced: '已成功同步 Discord 斜線指令：{commands}',
+  discordCommandsSyncFailed: 'Discord 斜線指令同步失敗',
 }

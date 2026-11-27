@@ -5,7 +5,12 @@ import worker from '../src/index.js';
 import {
   buildDiscordAlertEmbed,
   buildProgressBar,
+  DISCORD_EXPIRE_REFRESH_ID,
+  DISCORD_NODE_REFRESH_PREFIX,
+  DISCORD_PING_REFRESH_PREFIX,
+  DISCORD_SLASH_COMMANDS,
   DISCORD_STATUS_REFRESH_ID,
+  DISCORD_TRAFFIC_REFRESH_ID,
   getLoadLevelIcon,
   handleDiscordInteraction,
   sendDiscordBotNotification,
@@ -209,10 +214,10 @@ test('/status slash command returns Embeds for non-hidden servers and omits hidd
   assert.equal(embed.fields.length, 2);
   assert.equal(embed.fields[0].inline, true);
   assert.match(embed.fields[0].name, /Tokyo-01 \[JP\]/);
-  assert.match(embed.fields[0].value, /`CPU` ▰▰▰▱▱▱▱▱ \*\*35\.4%\*\*/);
-  assert.match(embed.fields[0].value, /`RAM` ▰▰▰▰▱▱▱▱ \*\*50\.0%\*\*/);
-  assert.match(embed.fields[0].value, /1\.0 MB\/s/);
-  assert.match(embed.fields[0].value, /1d 1h 1m/);
+  assert.match(embed.fields[0].value, /`CPU` ▰▰▱▱▱ \*\*35\.4%\*\*/);
+  assert.match(embed.fields[0].value, /`RAM` ▰▰▰▱▱ \*\*50\.0%\*\*/);
+  assert.match(embed.fields[0].value, /↓1\.0M/);
+  assert.match(embed.fields[0].value, /1d 1h/);
   // US-02 already starts with "US-", so duplicate [US] tag is omitted
   assert.equal(embed.fields[1].name, '🔴 US-02');
   assert.match(embed.fields[1].value, /Offline/);
@@ -225,9 +230,10 @@ test('/status slash command returns Embeds for non-hidden servers and omits hidd
 });
 
 test('progress bars, high-load alerts, and Refresh button (type 3 -> type 7 UPDATE_MESSAGE) work properly', async () => {
-  assert.equal(buildProgressBar(0), '▱▱▱▱▱▱▱▱');
-  assert.equal(buildProgressBar(50), '▰▰▰▰▱▱▱▱');
-  assert.equal(buildProgressBar(91.1), '▰▰▰▰▰▰▰▱');
+  assert.equal(buildProgressBar(0), '▱▱▱▱▱');
+  assert.equal(buildProgressBar(50), '▰▰▰▱▱');
+  assert.equal(buildProgressBar(91.1), '▰▰▰▰▰');
+  assert.equal(buildProgressBar(50, 8), '▰▰▰▰▱▱▱▱');
   assert.equal(getLoadLevelIcon(30), '🟢');
   assert.equal(getLoadLevelIcon(70), '🟡');
   assert.equal(getLoadLevelIcon(91.1), '🔴');
@@ -492,6 +498,259 @@ test('send_test_notification reads site_title from appearance_options without Re
     assert.equal(requests.length, 1);
     assert.equal(requests[0].body.embeds[0].footer.text, 'Yori Panel');
     assert.equal(requests[0].body.embeds[0].fields[0].value, 'Yori Panel');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('/node, /traffic, /expire, /ping commands, autocomplete, and refresh buttons work end-to-end', async () => {
+  clearAllCaches();
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
+  const { privateKey, publicKeyHex } = await createEd25519TestKeys();
+  const now = Date.now();
+  const futureDate = (days) => {
+    const d = new Date(now + days * 86400000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  };
+
+  const servers = [
+    {
+      id: 'srv-us',
+      name: 'US-Muse',
+      region: 'us',
+      server_group: 'Prod',
+      is_hidden: '0',
+      sort_order: 0,
+      history_partition_id: 1,
+      traffic_limit: '1000',
+      traffic_calc_type: 'total',
+      expire_date: futureDate(5),
+      price: '$12.00/月',
+      billing_cycle: 'month',
+      auto_renewal: '0',
+      ddns_enabled: '1',
+      ddns_domain: 'muse.example.com',
+      ddns_record_type: 'AUTO',
+      os: 'Ubuntu 22.04',
+      cpu_cores: 4
+    },
+    {
+      id: 'srv-jp',
+      name: 'JP-Tokyo',
+      region: 'jp',
+      server_group: 'Edge',
+      is_hidden: '0',
+      sort_order: 1,
+      history_partition_id: 2,
+      traffic_limit: '500',
+      traffic_calc_type: 'total',
+      expire_date: futureDate(40),
+      price: '¥120.00/年',
+      billing_cycle: 'year',
+      auto_renewal: '1'
+    },
+    {
+      id: 'srv-secret',
+      name: 'Hidden-Box',
+      region: 'sg',
+      is_hidden: '1',
+      sort_order: 2,
+      history_partition_id: 3,
+      traffic_limit: '100'
+    }
+  ];
+
+  const GB = 1024 * 1024 * 1024;
+  const metricsById = new Map([
+    ['srv-us', {
+      timestamp: now - 5_000,
+      cpu: 18.5,
+      load_avg: '0.42, 0.35, 0.28',
+      ram_used: 920,
+      ram_total: 1024,
+      disk_used: 15360,
+      disk_total: 40960,
+      net_in_speed: 2048,
+      net_out_speed: 4096,
+      tcp_conn: 55,
+      udp_conn: 7,
+      net_rx_monthly: 500 * GB,
+      net_tx_monthly: 400 * GB,
+      ping_ct: 145,
+      ping_cu: 132,
+      ping_cm: 168,
+      loss_ct: 0,
+      loss_cu: 1,
+      ip_v4: '198.51.100.77',
+      uptime: 7200
+    }],
+    ['srv-jp', {
+      timestamp: now - 5_000,
+      cpu: 6.2,
+      ram_used: 256,
+      ram_total: 1024,
+      disk_used: 4096,
+      disk_total: 20480,
+      net_in_speed: 512,
+      net_out_speed: 256,
+      net_rx_monthly: 100 * GB,
+      net_tx_monthly: 50 * GB,
+      ping_ct: 45,
+      ping_cu: 38,
+      ping_cm: 52,
+      uptime: 86400
+    }]
+  ]);
+
+  const db = makeDiscordMockDb({
+    servers,
+    metricsById,
+    settings: {
+      notification_language: 'zh',
+      notification_timezone: 'UTC',
+      custom_ct_name: '电信',
+      custom_cu_name: '联通',
+      custom_cm_name: '移动'
+    },
+    appearance: { site_title: 'Yori Monitor' }
+  });
+  const env = { DISCORD_PUBLIC_KEY: publicKeyHex, DB: db };
+
+  async function callInteraction(payload) {
+    const body = JSON.stringify(payload);
+    const ts = '1700000300';
+    const sig = await signInteraction(privateKey, ts, body);
+    const res = await handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': sig, 'X-Signature-Timestamp': ts },
+      body
+    }), env);
+    assert.equal(res.status, 200);
+    return res.json();
+  }
+
+  // 1) Autocomplete filters visible nodes and excludes hidden ones
+  const ac = await callInteraction({
+    type: 4,
+    data: { name: 'node', options: [{ name: 'name', value: 'us', focused: true }] }
+  });
+  assert.equal(ac.type, 8);
+  assert.equal(ac.data.choices.length, 1);
+  assert.equal(ac.data.choices[0].name, 'US-Muse');
+  assert.equal(ac.data.choices[0].value, 'srv-us');
+
+  const acHidden = await callInteraction({
+    type: 4,
+    data: { name: 'node', options: [{ name: 'name', value: 'Hidden', focused: true }] }
+  });
+  assert.equal(acHidden.data.choices.length, 0);
+
+  // 2) /node detailed card + no raw IP leak + refresh button
+  const nodeRes = await callInteraction({
+    type: 2,
+    data: { name: 'node', options: [{ name: 'name', value: 'US-Muse' }] }
+  });
+  assert.equal(nodeRes.type, 4);
+  const nodeEmbed = nodeRes.data.embeds[0];
+  assert.equal(nodeEmbed.title, '🟢 US-Muse ⚠️');
+  assert.equal(nodeEmbed.footer.text, 'Yori Monitor');
+  assert.doesNotMatch(JSON.stringify(nodeEmbed), /198\.51\.100\.77/);
+  assert.match(JSON.stringify(nodeEmbed), /muse\.example\.com/);
+  assert.equal(nodeRes.data.components[0].components[0].custom_id, `${DISCORD_NODE_REFRESH_PREFIX}srv-us`);
+
+  const nodeRefresh = await callInteraction({
+    type: 3,
+    data: { custom_id: `${DISCORD_NODE_REFRESH_PREFIX}srv-us` }
+  });
+  assert.equal(nodeRefresh.type, 7);
+  assert.equal(nodeRefresh.data.embeds[0].title, '🟢 US-Muse ⚠️');
+
+  // 3) /traffic ranking sorted descending by usage %
+  const trafficRes = await callInteraction({ type: 2, data: { name: 'traffic' } });
+  const trafficEmbed = trafficRes.data.embeds[0];
+  assert.equal(trafficEmbed.fields.length, 2);
+  assert.equal(trafficEmbed.fields[0].name, '🔴 US-Muse');
+  assert.match(trafficEmbed.fields[0].value, /90\.0%/);
+  assert.equal(trafficEmbed.fields[1].name, '🟢 JP-Tokyo');
+  assert.match(trafficEmbed.fields[1].value, /30\.0%/);
+  assert.equal(trafficRes.data.components[0].components[0].custom_id, DISCORD_TRAFFIC_REFRESH_ID);
+
+  const trafficRefresh = await callInteraction({ type: 3, data: { custom_id: DISCORD_TRAFFIC_REFRESH_ID } });
+  assert.equal(trafficRefresh.type, 7);
+
+  // 4) /expire sorted ascending by remaining days + billing totals
+  const expireRes = await callInteraction({ type: 2, data: { name: 'expire' } });
+  const expireEmbed = expireRes.data.embeds[0];
+  assert.equal(expireEmbed.fields.length, 2);
+  assert.equal(expireEmbed.fields[0].name, '🔴 US-Muse');
+  assert.equal(expireEmbed.fields[1].name, '🔄 JP-Tokyo');
+  assert.match(expireEmbed.description, /\$12\.00/);
+  assert.match(expireEmbed.description, /¥10\.00/);
+  assert.equal(expireRes.data.components[0].components[0].custom_id, DISCORD_EXPIRE_REFRESH_ID);
+
+  // 5) /ping overview sorted by lowest average latency + single node ping
+  const pingAll = await callInteraction({ type: 2, data: { name: 'ping' } });
+  const pingEmbed = pingAll.data.embeds[0];
+  assert.equal(pingEmbed.fields.length, 2);
+  assert.equal(pingEmbed.fields[0].name, '🟢 JP-Tokyo');
+  assert.match(pingEmbed.fields[0].value, /电信 \*\*45ms\*\*/);
+  assert.equal(pingEmbed.fields[1].name, '🟡 US-Muse');
+  assert.equal(pingAll.data.components[0].components[0].custom_id, DISCORD_PING_REFRESH_PREFIX);
+
+  const pingOne = await callInteraction({
+    type: 2,
+    data: { name: 'ping', options: [{ name: 'name', value: 'srv-jp' }] }
+  });
+  assert.equal(pingOne.data.embeds[0].fields.length, 3);
+  assert.equal(pingOne.data.components[0].components[0].custom_id, `${DISCORD_PING_REFRESH_PREFIX}:srv-jp`);
+
+  const pingRefresh = await callInteraction({
+    type: 3,
+    data: { custom_id: `${DISCORD_PING_REFRESH_PREFIX}:srv-jp` }
+  });
+  assert.equal(pingRefresh.type, 7);
+});
+
+test('admin sync_discord_commands registers all 5 slash commands via Discord API', async () => {
+  const sys = { password: 'hash', jwt_secret: 'x'.repeat(32) };
+  const db = makeDiscordMockDb({});
+  const env = { API_SECRET: 'secret', DB: db };
+  const token = await generateToken(env, sys);
+
+  const calls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url: String(url), method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+    if (String(url).endsWith('/oauth2/applications/@me')) {
+      return { ok: true, status: 200, async json() { return { id: 'app-999888777' }; } };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() { return DISCORD_SLASH_COMMANDS.map(cmd => ({ id: `id-${cmd.name}`, name: cmd.name })); }
+    };
+  };
+
+  try {
+    const res = await handleAdminAPI(new Request('https://monitor.example.com/admin/api', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        action: 'sync_discord_commands',
+        discord_bot_token: 'bot-token-123'
+      })
+    }), env, sys);
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.equal(json.success, true);
+    assert.equal(json.applicationId, 'app-999888777');
+    assert.deepEqual(json.commands, ['/status', '/node', '/traffic', '/expire', '/ping']);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].method, 'GET');
+    assert.equal(calls[1].method, 'PUT');
+    assert.equal(calls[1].url, 'https://discord.com/api/v10/applications/app-999888777/commands');
+    assert.equal(calls[1].body.length, 5);
   } finally {
     globalThis.fetch = originalFetch;
   }

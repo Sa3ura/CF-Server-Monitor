@@ -610,4 +610,9 @@ export default {
   discordStatusTemplatePlaceholder: '留空使用默认卡片；可填单节点格式如 CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'IP 变更通知隐藏完整 IP（如 216.*.*.171）',
   ipChangeMaskIpTip: '开启后，节点 IP 变更告警只展示脱敏网段（IPv4 为 a.*.*.d，IPv6 为 a:*:*:h），不影响 Cloudflare DDNS 自动更新真实 IP。',
+  syncDiscordCommands: '同步斜杠命令',
+  syncingDiscordCommands: '同步中...',
+  syncDiscordCommandsTip: '由 Worker 服务端直接向 Discord 注册或更新全部斜杠命令（/status、/node、/traffic、/expire、/ping），无需在本地运行脚本。',
+  discordCommandsSynced: '已成功同步 Discord 斜杠命令：{commands}',
+  discordCommandsSyncFailed: 'Discord 斜杠命令同步失败',
 }

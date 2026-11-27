@@ -610,4 +610,9 @@ export default {
   discordStatusTemplatePlaceholder: 'Laisser vide par défaut, ex. CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'Masquer les IP dans les alertes de changement d’IP (ex. 216.*.*.171)',
   ipChangeMaskIpTip: 'Masque les segments centraux de l’IP dans les notifications (IPv4 -> a.*.*.d, IPv6 -> a:*:*:h). La mise à jour Cloudflare DDNS utilise toujours l’IP réelle.',
+  syncDiscordCommands: 'Synchroniser les commandes',
+  syncingDiscordCommands: 'Synchronisation...',
+  syncDiscordCommandsTip: 'Enregistre ou met à jour toutes les commandes slash (/status, /node, /traffic, /expire, /ping) directement depuis Cloudflare Workers sans script local.',
+  discordCommandsSynced: 'Commandes slash Discord synchronisées : {commands}',
+  discordCommandsSyncFailed: 'Échec de la synchronisation des commandes Discord',
 }

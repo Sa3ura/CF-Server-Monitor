@@ -152,6 +152,7 @@
           :saving="saving"
           :change-admin-password="changeAdminPassword"
           :test-notification-loading="testNotificationLoading"
+          :discord-command-sync-loading="discordCommandSyncLoading"
           :d1-usage-loading="d1UsageLoading"
           @toggle-password="togglePassword"
           @toggle-admin-password-change="toggleAdminPasswordChange"
@@ -160,6 +161,7 @@
           @upload-bg-mobile="uploadBgMobile"
           @upload-favicon="uploadFavicon"
           @send-test-notification="sendTestNotification"
+          @sync-discord-commands="syncDiscordCommands"
           @query-d1-usage="queryD1Usage"
           @alert-message="alertMessage = $event"
         />
@@ -1214,6 +1216,7 @@ const showAutoUpdateWarning = ref(false)
 const autoUpdatePendingEnable = ref(false)
 
 const testNotificationLoading = ref(false)
+const discordCommandSyncLoading = ref(false)
 
 const saveResult = ref(null)
 
@@ -2662,6 +2665,28 @@ const sendTestNotification = async () => {
     alertMessage.value = trans.value.testNotificationFailed + ': ' + e.message
   } finally {
     testNotificationLoading.value = false
+  }
+}
+
+const syncDiscordCommands = async () => {
+  if (discordCommandSyncLoading.value) return
+  discordCommandSyncLoading.value = true
+  try {
+    const result = await adminApiForSite({
+      action: 'sync_discord_commands',
+      discord_bot_token: String(settings.value.discord_bot_token || '').trim()
+    })
+    if (!result.error) {
+      const cmdList = Array.isArray(result.data?.commands) ? result.data.commands.join(', ') : ''
+      const tmpl = trans.value.discordCommandsSynced || 'Synced Discord commands: {commands}'
+      alertMessage.value = tmpl.replace('{commands}', cmdList || '/status, /node, /traffic, /expire, /ping')
+    } else {
+      alertMessage.value = getMessage(result.error) || trans.value.discordCommandsSyncFailed
+    }
+  } catch (e) {
+    alertMessage.value = (trans.value.discordCommandsSyncFailed || 'Sync failed') + ': ' + e.message
+  } finally {
+    discordCommandSyncLoading.value = false
   }
 }
 

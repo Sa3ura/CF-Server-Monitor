@@ -610,4 +610,9 @@ export default {
   discordStatusTemplatePlaceholder: 'Kosongkan untuk Embed default, mis. CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'Samarkan IP pada notifikasi perubahan IP (mis. 216.*.*.171)',
   ipChangeMaskIpTip: 'Jika aktif, notifikasi menyamarkan segmen tengah IP (IPv4 -> a.*.*.d, IPv6 -> a:*:*:h). Sinkronisasi DDNS Cloudflare tetap memakai IP asli.',
+  syncDiscordCommands: 'Sinkronkan Perintah Slash',
+  syncingDiscordCommands: 'Menyinkronkan...',
+  syncDiscordCommandsTip: 'Daftarkan atau perbarui semua perintah slash (/status, /node, /traffic, /expire, /ping) langsung dari Cloudflare Workers tanpa skrip lokal.',
+  discordCommandsSynced: 'Perintah slash Discord berhasil disinkronkan: {commands}',
+  discordCommandsSyncFailed: 'Gagal menyinkronkan perintah slash Discord',
 }

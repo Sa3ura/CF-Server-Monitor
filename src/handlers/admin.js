@@ -8,7 +8,7 @@ import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
-import { isDiscordBotEnabled, validateDiscordBotTarget } from '../services/discord.js';
+import { isDiscordBotEnabled, syncDiscordSlashCommands, validateDiscordBotTarget } from '../services/discord.js';
 import { isValidDdnsDomain, normalizeDdnsDomain, normalizeDdnsRecordType } from '../services/ipMonitor.js';
 import { getNotificationMessages } from '../services/notificationMessages.js';
 import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
@@ -790,6 +790,27 @@ async function handleSendTestNotificationAction({ data, env }) {
   }
 }
 
+async function handleSyncDiscordCommandsAction({ data, sys }) {
+  const token = normalizeDiscordBotToken(
+    data?.discord_bot_token !== undefined && String(data.discord_bot_token).trim() !== ''
+      ? data.discord_bot_token
+      : sys?.discord_bot_token
+  );
+  if (!token) {
+    return createBadRequestResponse('discordBotTokenRequired');
+  }
+  const result = await syncDiscordSlashCommands({ discord_bot_token: token });
+  if (!result.ok) {
+    return createBadRequestResponse(`discordCommandsSyncFailed: ${result.error}`);
+  }
+  return createSuccessResponse({
+    success: true,
+    applicationId: result.applicationId,
+    commands: result.commands,
+    message: 'discordCommandsSynced'
+  });
+}
+
 const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   passkey_list: handlePasskeyAction,
   passkey_register_options: handlePasskeyAction,
@@ -800,7 +821,8 @@ const AUTHENTICATED_ADMIN_ACTION_HANDLERS = {
   save_theme_options: handleSaveThemeOptionsAction,
   list: handleListAction,
   d1_usage: handleD1UsageAction,
-  send_test_notification: handleSendTestNotificationAction
+  send_test_notification: handleSendTestNotificationAction,
+  sync_discord_commands: handleSyncDiscordCommandsAction
 };
 
 // 导出时只取与部署无关的站点/外观字段，避免把凭据和环境绑定配置写进备份文件。
