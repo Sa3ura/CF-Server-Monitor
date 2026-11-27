@@ -752,7 +752,10 @@ async function handleSendTestNotificationAction({ data }) {
   try {
     const notificationLanguage = normalizeNotificationLanguage(notification_language);
     const messages = getNotificationMessages({ notification_language: notificationLanguage });
+    const appearanceOptions = env?.DB ? await loadAppearanceOptions(env.DB) : {};
+    const siteTitle = String(appearanceOptions?.site_title || '').trim();
     const result = await sendNotification({
+      site_title: siteTitle || undefined,
       tg_bot_token,
       tg_chat_id: tg_chat_id || '',
       discord_bot_enabled: discordBotEnabled ? 'true' : 'false',
@@ -772,7 +775,7 @@ async function handleSendTestNotificationAction({ data }) {
     }, messages.testMessage, {
       event: messages.events.test,
       emoji: '✅',
-      clients: ['CF Server Monitor'],
+      clients: [siteTitle || 'CF Server Monitor'],
       count: 1,
       message: messages.testMessage
     });

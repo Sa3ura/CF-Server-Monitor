@@ -1,6 +1,6 @@
 import { normalizeClientIp } from '../utils/metrics.js';
 import { isEnabledFlag } from '../utils/serverBilling.js';
-import { loadSiteSettings, normalizeBooleanSetting } from '../utils/settings.js';
+import { loadSettings, normalizeBooleanSetting } from '../utils/settings.js';
 import { hasNotificationTarget, sendNotification } from './notification.js';
 import { getNotificationMessages } from './notificationMessages.js';
 
@@ -267,7 +267,7 @@ async function runIpChangeSideEffects(env, server, changes) {
   }
 
   if (!env?.DB) return;
-  const settings = await loadSiteSettings(env.DB);
+  const settings = await loadSettings(env.DB);
   if (!hasNotificationTarget(settings)) return;
 
   const messages = getNotificationMessages(settings);

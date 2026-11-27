@@ -14,9 +14,9 @@ import { handleAdminAPI } from '../src/handlers/admin.js';
 import { handleServerAPI } from '../src/handlers/dashboard.js';
 import { generateToken } from '../src/middleware/auth.js';
 import { clearAllCaches } from '../src/utils/cache.js';
-import { clearSiteSettingsCache } from '../src/utils/settings.js';
+import { clearAppearanceSettingsCache, clearSiteSettingsCache } from '../src/utils/settings.js';
 
-function makeIpMonitorDb(server, settings = {}) {
+function makeIpMonitorDb(server, settings = {}, appearance = {}) {
   const updates = [];
   return {
     updates,
@@ -27,6 +27,9 @@ function makeIpMonitorDb(server, settings = {}) {
         async first() {
           if (sql.includes("key = 'site_options'")) {
             return { value: JSON.stringify(settings) };
+          }
+          if (sql.includes("key = 'appearance_options'")) {
+            return { value: JSON.stringify(appearance) };
           }
           if (sql.includes('FROM servers WHERE id = ?')) {
             return server;
@@ -241,6 +244,7 @@ test('maskIpAddress masks IPv4 and IPv6 addresses for privacy', () => {
 
 test('evaluateIpChange masks IPs in notifications when ip_change_mask_ip is true without affecting DDNS real IP', async () => {
   clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
   const server = {
     id: 'srv-mask-1',
     name: 'Privacy-Node',
@@ -254,10 +258,13 @@ test('evaluateIpChange masks IPs in notifications when ip_change_mask_ip is true
   };
   const db = makeIpMonitorDb(server, {
     jwt_secret: 'x'.repeat(32),
-    tg_bot_token: '123:tg',
-    tg_chat_id: '999',
+    discord_bot_enabled: 'true',
+    discord_bot_token: 'bot-token',
+    discord_channel_id: '123456789012345678',
     notification_language: 'zh',
     ip_change_mask_ip: 'true'
+  }, {
+    site_title: 'Yori Status'
   });
   const env = { DB: db, CF_DNS_API_TOKEN: 'cf-token', CF_ZONE_ID: 'zone-1' };
   const fetchCalls = [];
@@ -284,8 +291,11 @@ test('evaluateIpChange masks IPs in notifications when ip_change_mask_ip is true
     await evaluateIpChange(env, server, { ip_v4: '3.3.30.40' });
     assert.equal(server.last_ipv4, '3.3.30.40');
     assert.equal(fetchCalls[1].body.content, '3.3.30.40');
-    assert.match(fetchCalls[2].body.text, /1\.\*\.\*\.20 -> 3\.\*\.\*\.40/);
-    assert.doesNotMatch(fetchCalls[2].body.text, /3\.3\.30\.40/);
+    const embed = fetchCalls[2].body.embeds[0];
+    assert.equal(embed.footer.text, 'Yori Status');
+    assert.match(embed.description, /1\.\\\*\.\\\*\.20 -> 3\.\\\*\.\\\*\.40/);
+    assert.doesNotMatch(embed.description, /3\.3\.30\.40/);
+    assert.equal(embed.fields[3].value, '`1.*.*.20` → `3.*.*.40` | DNS(priv.example.com): Updated');
   } finally {
     globalThis.fetch = originalFetch;
   }

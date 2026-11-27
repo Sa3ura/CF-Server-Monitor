@@ -75,12 +75,27 @@ export function resolveDiscordEmbedColor(context = {}) {
   return 0x5865f2;
 }
 
+function escapeDiscordMaskedIps(text) {
+  const source = String(text || '');
+  if (!source.includes('*')) return source;
+  // Preserve fenced code blocks and inline code spans untouched; escape * in masked IPs outside code so Discord does not parse *.* / *:* as italics
+  return source
+    .split(/(```[\s\S]*?```|`[^`\n]+`)/g)
+    .map((segment, index) => {
+      if (index % 2 === 1) return segment;
+      return segment
+        .replace(/\b(\d{1,3})\.\*\.\*\.(\d{1,3})\b/g, '$1.\\*.\\*.$2')
+        .replace(/\b([0-9a-fA-F]{1,4}):\*:\*:([0-9a-fA-F]{1,4})\b/g, '$1:\\*:\\*:$2');
+    })
+    .join('');
+}
+
 export function buildDiscordAlertEmbed(context = {}, formattedMsg = '', settings = {}) {
   const labels = getNotificationMessages(settings)?.discord || {};
   const event = String(context.event || 'Notification').trim();
   const emoji = String(context.emoji || '').trim();
   const title = truncateText(`${emoji ? `${emoji} ` : ''}${event}`.trim(), 256);
-  const rawDescription = String(formattedMsg || context.message || '').trim();
+  const rawDescription = escapeDiscordMaskedIps(String(formattedMsg || context.message || '').trim());
   const description = truncateText(rawDescription || '-', 4096);
   const footerText = truncateText(String(settings?.site_title || '').trim() || 'CF Server Monitor', 2048);
 

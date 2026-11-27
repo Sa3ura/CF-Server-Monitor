@@ -377,6 +377,23 @@ test('buildDiscordAlertEmbed uses formatted notification template and localized 
   assert.equal(embed.fields[1].name, '事件');
   assert.equal(embed.fields[2].name, '时间');
   assert.equal(embed.footer.text, 'My Monitor');
+
+  // Masked IP asterisks outside code spans/blocks should be escaped so Discord does not render italics
+  const maskedEmbed = buildDiscordAlertEmbed({
+    event: '节点 IP 变更告警',
+    emoji: '🌐',
+    clients: ['US-Muse'],
+    time: '2026/11/27 17:20:44'
+  }, 'US-Muse IPv4: 104.*.*.139 -> 104.*.*.237\nIPv6: 2001:*:*:7334\n`104.*.*.139`\n```text\n104.*.*.139\n```', {
+    notification_language: 'zh',
+    site_title: 'Yori Monitor'
+  });
+  assert.match(maskedEmbed.description, /104\\\*\.\\\*\.139 -> 104\\\*\.\\\*\.237|104\.\\\*\.\\\*\.139 -> 104\.\\\*\.\\\*\.237/);
+  assert.equal(
+    maskedEmbed.description,
+    'US-Muse IPv4: 104.\\*.\\*.139 -> 104.\\*.\\*.237\nIPv6: 2001:\\*:\\*:7334\n`104.*.*.139`\n```text\n104.*.*.139\n```'
+  );
+  assert.equal(maskedEmbed.footer.text, 'Yori Monitor');
 });
 
 test('/status supports custom per-node template and {{#servers}} loop template', async () => {

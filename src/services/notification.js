@@ -6,6 +6,7 @@ import {
   getResourceAlertConfig,
   getResourceAlertRuleThresholds,
   getTgNotifyMinutes,
+  loadAppearanceOptions,
   loadSiteSettings,
   normalizeExpireNotificationTime,
   normalizeBooleanSetting,
@@ -26,6 +27,7 @@ import {
 } from '../utils/traffic.js';
 import { detectBillingCycle, isEnabledFlag, normalizeBillingCycle, renewExpireDateIfNeeded } from '../utils/serverBilling.js';
 import {
+  DEFAULT_SITE_TITLE,
   NOTIFICATION_MAX_RETRIES,
   NOTIFICATION_RETRY_DELAY_MS,
   RESOURCE_ALERT_EVALUATE_RULE_BATCH_SIZE,
@@ -528,6 +530,20 @@ function inferNotificationEmoji(event) {
   return 'ℹ️';
 }
 
+async function withNotificationAppearance(db, settings) {
+  if (!db || !settings) return settings;
+  const template = String(settings.notification_template || '');
+  const needsSiteTitle = isDiscordBotEnabled(settings) || /\{\{\s*(?:site_title|title)\s*\}\}/.test(template);
+  if (!needsSiteTitle) return settings;
+  try {
+    const appearance = await loadAppearanceOptions(db);
+    if (appearance?.site_title) {
+      return { ...settings, site_title: appearance.site_title };
+    }
+  } catch (_) {}
+  return settings;
+}
+
 function buildNotificationContext(settings, msg, context = {}) {
   const now = formatCurrentTime(settings);
   const clients = normalizeNotificationClients(context);
@@ -535,8 +551,10 @@ function buildNotificationContext(settings, msg, context = {}) {
     ? Number(context.count)
     : clients.length;
   const event = context.event || inferNotificationEvent(msg, getNotificationMessages(settings).events.notification);
+  const siteTitle = String(settings?.site_title || '').trim() || DEFAULT_SITE_TITLE;
   return {
-    title: '💌 Cloudflare Server Monitor',
+    title: `💌 ${siteTitle}`,
+    site_title: siteTitle,
     event,
     emoji: context.emoji || inferNotificationEmoji(event),
     client: context.client || clients.join(', '),
@@ -739,7 +757,8 @@ export async function evaluateTrafficAlert(env, server, metrics, hooks = {}) {
       threshold: effectivePct
     });
     const msg = `${serverName}  ${usage}`;
-    const err = await sendNotification(settings, msg, {
+    const notifySettings = await withNotificationAppearance(env.DB, settings);
+    const err = await sendNotification(notifySettings, msg, {
       event: messages.events.trafficAlert,
       emoji: '📈',
       clients: [serverName],
@@ -1124,12 +1143,15 @@ export async function checkOfflineNodes(db, options = {}) {
     }
 
     const messages = getNotificationMessages(siteSettings);
+    const notifySettings = (offlineNodes.length > 0 || recoveredNodes.length > 0)
+      ? await withNotificationAppearance(db, siteSettings)
+      : siteSettings;
     if (offlineNodes.length > 0) {
       const nodeList = offlineNodes
         .map(n => `${n.name}  ${messages.lastReport(formatLastReportTime(n.lastReportTime, siteSettings))}`)
         .join('\n');
       const msg = nodeList;
-      await sendNotification(siteSettings, msg, {
+      await sendNotification(notifySettings, msg, {
         event: messages.events.offline,
         emoji: '❌',
         clients: offlineNodes.map(n => n.name),
@@ -1141,7 +1163,7 @@ export async function checkOfflineNodes(db, options = {}) {
     if (recoveredNodes.length > 0) {
       const nodeList = recoveredNodes.map(n => n.name).join('\n');
       const msg = nodeList;
-      await sendNotification(siteSettings, msg, {
+      await sendNotification(notifySettings, msg, {
         event: messages.events.recovered,
         emoji: '✅',
         clients: recoveredNodes.map(n => n.name),
@@ -1330,10 +1352,13 @@ export async function checkResourceAlerts(env, options = {}) {
     }
 
     const notificationPayloads = buildResourceAlertNotificationPayloads(alertNodes, recoveredNodes, siteSettings);
-    for (const payload of notificationPayloads) {
-      const notificationError = await sendNotification(siteSettings, payload.msg, payload.context);
-      if (notificationError) {
-        console.warn('[ResourceAlert] notification failed:', notificationError);
+    if (notificationPayloads.length > 0) {
+      const notifySettings = await withNotificationAppearance(db, siteSettings);
+      for (const payload of notificationPayloads) {
+        const notificationError = await sendNotification(notifySettings, payload.msg, payload.context);
+        if (notificationError) {
+          console.warn('[ResourceAlert] notification failed:', notificationError);
+        }
       }
     }
   } catch (e) {
@@ -1391,6 +1416,9 @@ export async function checkExpiringServers(db, options = {}) {
     }
 
     const messages = getNotificationMessages(siteSettings);
+    const notifySettings = ((renewedServers.length > 0 && hasNotificationTarget(siteSettings)) || expiringServers.length > 0)
+      ? await withNotificationAppearance(db, siteSettings)
+      : siteSettings;
     if (renewedServers.length > 0) {
       clearServersListCache();
 
@@ -1399,7 +1427,7 @@ export async function checkExpiringServers(db, options = {}) {
         const renewalList = renewedServers.map(s => `${s.name}  ${messages.renewedUntil(s.expire_date)}`).join('\n');
         debug(`[Cron] 发送自动续费成功通知: ${renewalList}`);
         try {
-          await sendNotification(siteSettings, renewalList, {
+          await sendNotification(notifySettings, renewalList, {
             event: messages.events.renewed,
             emoji: '✅',
             clients: renewedServers.map(s => s.name),
@@ -1417,7 +1445,7 @@ export async function checkExpiringServers(db, options = {}) {
       const msg = serverList;
       debug(`[Cron] 发送到期提醒通知: ${msg}`);
       try {
-        await sendNotification(siteSettings, msg, {
+        await sendNotification(notifySettings, msg, {
           event: messages.events.expiring,
           emoji: '⚠️',
           clients: expiringServers.map(s => s.name),
