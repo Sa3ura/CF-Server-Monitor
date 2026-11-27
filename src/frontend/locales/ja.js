@@ -606,8 +606,8 @@ export default {
   ddnsDomainRequired: 'DDNS を有効にする場合はドメインが必須です',
   invalidDdnsDomain: 'DDNS ドメインの形式が無効です',
   discordStatusTemplate: '/status 返信テンプレート（任意）',
-  discordStatusTemplateTip: '/status の表示形式をカスタマイズします。{{status_icon}}、{{status}}、{{name}}、{{region}}、{{group}}、{{cpu}}、{{ram}}、{{ram_used}}、{{ram_total}}、{{disk}}、{{net_in}}、{{net_out}}、{{uptime}}、{{last_seen}}、{{detail}}、または {{#servers}}...{{/servers}} ループと {{total}}、{{online}}、{{offline}}、{{time}}、{{site_title}} が利用できます。',
+  discordStatusTemplateTip: '/status の表示形式をカスタマイズします。{{status_icon}}、{{status}}、{{load_icon}}、{{name}}、{{region}}、{{group}}、{{cpu}}、{{cpu_bar}}、{{cpu_icon}}、{{ram}}、{{ram_bar}}、{{ram_icon}}、{{ram_used}}、{{ram_total}}、{{disk}}、{{disk_bar}}、{{net_in}}、{{net_out}}、{{uptime}}、{{last_seen}}、{{detail}}、または {{#servers}}...{{/servers}} ループと {{total}}、{{online}}、{{offline}}、{{time}}、{{site_title}} が利用できます。',
   discordStatusTemplatePlaceholder: '空欄でデフォルト表示。例: CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
-  ipChangeMaskIp: 'IP 変更通知で IP をマスク表示する（例: 127.0.*.*）',
-  ipChangeMaskIpTip: '有効にすると通知内の IP をマスクします（IPv4 は a.b.*.*、IPv6 は a:b:*:*）。Cloudflare DDNS の更新には実際の IP が使用されます。',
+  ipChangeMaskIp: 'IP 変更通知で IP をマスク表示する（例: 216.*.*.171）',
+  ipChangeMaskIpTip: '有効にすると通知内の IP の中間セグメントをマスクします（IPv4 は a.*.*.d、IPv6 は a:*:*:h）。Cloudflare DDNS の更新には実際の IP が使用されます。',
 }

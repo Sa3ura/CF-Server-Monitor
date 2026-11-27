@@ -33,7 +33,8 @@ const NOTIFICATION_MESSAGES = {
       noServers: '暂无可见服务器。',
       noReport: '无上报记录',
       lastSeen: duration => `${duration}前`,
-      omitted: count => `另有 ${count} 台节点因超过卡片长度限制未展示。`
+      omitted: count => `另有 ${count} 台节点因超过卡片长度限制未展示。`,
+      refresh: '刷新'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `本月已用 ${usedGb} GB / 限额 ${limitGb} GB（${percent}% ≥ ${threshold}%）`,
@@ -71,7 +72,8 @@ const NOTIFICATION_MESSAGES = {
       noServers: '暫無可見伺服器。',
       noReport: '無上報記錄',
       lastSeen: duration => `${duration}前`,
-      omitted: count => `另有 ${count} 台節點因超過卡片長度限制未展示。`
+      omitted: count => `另有 ${count} 台節點因超過卡片長度限制未展示。`,
+      refresh: '重新整理'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `本月已用 ${usedGb} GB / 限額 ${limitGb} GB（${percent}% ≥ ${threshold}%）`,
@@ -109,7 +111,8 @@ const NOTIFICATION_MESSAGES = {
       noServers: 'No visible servers configured.',
       noReport: 'No report',
       lastSeen: duration => `Last seen ${duration} ago`,
-      omitted: count => `+${count} more node(s) omitted to fit Discord embed limits.`
+      omitted: count => `+${count} more node(s) omitted to fit Discord embed limits.`,
+      refresh: 'Refresh'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Used ${usedGb} GB of ${limitGb} GB this month (${percent}% ≥ ${threshold}%)`,
@@ -147,7 +150,8 @@ const NOTIFICATION_MESSAGES = {
       noServers: '表示可能なサーバーはありません。',
       noReport: '報告なし',
       lastSeen: duration => `${duration}前`,
-      omitted: count => `他 ${count} 台は Embed 文字数制限のため省略されました。`
+      omitted: count => `他 ${count} 台は Embed 文字数制限のため省略されました。`,
+      refresh: '更新'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `今月 ${usedGb} GB / 上限 ${limitGb} GB 使用（${percent}% ≥ ${threshold}%）`,
@@ -185,7 +189,8 @@ const NOTIFICATION_MESSAGES = {
       noServers: 'Tidak ada server yang terlihat.',
       noReport: 'Tidak ada laporan',
       lastSeen: duration => `Terakhir dilihat ${duration} lalu`,
-      omitted: count => `+${count} node lainnya disembunyikan karena batas panjang Embed.`
+      omitted: count => `+${count} node lainnya disembunyikan karena batas panjang Embed.`,
+      refresh: 'Segarkan'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Terpakai ${usedGb} GB dari ${limitGb} GB bulan ini (${percent}% ≥ ${threshold}%)`,
@@ -223,7 +228,8 @@ const NOTIFICATION_MESSAGES = {
       noServers: 'Aucun serveur visible configuré.',
       noReport: 'Aucun rapport',
       lastSeen: duration => `Vu il y a ${duration}`,
-      omitted: count => `+${count} autre(s) nœud(s) omis en raison de la limite Embed.`
+      omitted: count => `+${count} autre(s) nœud(s) omis en raison de la limite Embed.`,
+      refresh: 'Actualiser'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `${usedGb} Go sur ${limitGb} Go utilisés ce mois-ci (${percent}% ≥ ${threshold}%)`,
@@ -261,7 +267,8 @@ const NOTIFICATION_MESSAGES = {
       noServers: 'No hay servidores visibles configurados.',
       noReport: 'Sin reportes',
       lastSeen: duration => `Visto hace ${duration}`,
-      omitted: count => `+${count} nodo(s) omitido(s) por el límite de Discord Embed.`
+      omitted: count => `+${count} nodo(s) omitido(s) por el límite de Discord Embed.`,
+      refresh: 'Actualizar'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Usados ${usedGb} GB de ${limitGb} GB este mes (${percent}% ≥ ${threshold}%)`,

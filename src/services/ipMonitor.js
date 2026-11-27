@@ -39,14 +39,14 @@ export function maskIpAddress(value) {
   if (!parsed) return '';
   if (parsed.family === 'v4') {
     const parts = parsed.value.split('.');
-    return parts.length === 4 ? `${parts[0]}.${parts[1]}.*.*` : parsed.value;
+    return parts.length === 4 ? `${parts[0]}.*.*.${parts[3]}` : parsed.value;
   }
   const groups = expandIpv6Address(parsed.value);
   if (groups && groups.length >= 2) {
-    return `${groups[0]}:${groups[1]}:*:*`;
+    return `${groups[0]}:*:*:${groups[groups.length - 1]}`;
   }
   const rawParts = parsed.value.split(':').filter(Boolean);
-  return rawParts.length >= 2 ? `${rawParts[0]}:${rawParts[1]}:*:*` : '*:*:*:*';
+  return rawParts.length >= 2 ? `${rawParts[0]}:*:*:${rawParts[rawParts.length - 1]}` : '*:*:*:*';
 }
 
 export function extractReportedIps(metrics = {}, fallbackClientIp = '') {

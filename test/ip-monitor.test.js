@@ -233,9 +233,9 @@ test('syncCloudflareDnsRecord handles missing env and DNS API failures safely', 
 });
 
 test('maskIpAddress masks IPv4 and IPv6 addresses for privacy', () => {
-  assert.equal(maskIpAddress('127.0.12.34'), '127.0.*.*');
-  assert.equal(maskIpAddress('::ffff:198.51.100.42'), '198.51.*.*');
-  assert.equal(maskIpAddress('2001:db8:85a3::8a2e:370:7334'), '2001:db8:*:*');
+  assert.equal(maskIpAddress('216.12.34.171'), '216.*.*.171');
+  assert.equal(maskIpAddress('::ffff:198.51.100.42'), '198.*.*.42');
+  assert.equal(maskIpAddress('2001:db8:85a3::8a2e:370:7334'), '2001:*:*:7334');
   assert.equal(maskIpAddress('invalid'), '');
 });
 
@@ -284,7 +284,7 @@ test('evaluateIpChange masks IPs in notifications when ip_change_mask_ip is true
     await evaluateIpChange(env, server, { ip_v4: '3.3.30.40' });
     assert.equal(server.last_ipv4, '3.3.30.40');
     assert.equal(fetchCalls[1].body.content, '3.3.30.40');
-    assert.match(fetchCalls[2].body.text, /1\.1\.\*\.\* -> 3\.3\.\*\.\*/);
+    assert.match(fetchCalls[2].body.text, /1\.\*\.\*\.20 -> 3\.\*\.\*\.40/);
     assert.doesNotMatch(fetchCalls[2].body.text, /3\.3\.30\.40/);
   } finally {
     globalThis.fetch = originalFetch;

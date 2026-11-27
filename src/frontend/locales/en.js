@@ -606,8 +606,8 @@ export default {
   ddnsDomainRequired: 'DDNS domain is required when DDNS is enabled',
   invalidDdnsDomain: 'Invalid DDNS domain format',
   discordStatusTemplate: '/status Reply Template (Optional)',
-  discordStatusTemplateTip: 'Customize /status node formatting. Supports {{status_icon}}, {{status}}, {{name}}, {{region}}, {{group}}, {{cpu}}, {{ram}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{net_in}}, {{net_out}}, {{uptime}}, {{last_seen}}, {{detail}}, or full {{#servers}}...{{/servers}} loop with {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
+  discordStatusTemplateTip: 'Customize /status node formatting. Supports {{status_icon}}, {{status}}, {{load_icon}}, {{name}}, {{region}}, {{group}}, {{cpu}}, {{cpu_bar}}, {{cpu_icon}}, {{ram}}, {{ram_bar}}, {{ram_icon}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{disk_bar}}, {{net_in}}, {{net_out}}, {{uptime}}, {{last_seen}}, {{detail}}, or full {{#servers}}...{{/servers}} loop with {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
   discordStatusTemplatePlaceholder: 'Leave empty for default Embeds, or enter e.g. CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
-  ipChangeMaskIp: 'Mask IPs in IP change alerts (e.g. 127.0.*.*)',
-  ipChangeMaskIpTip: 'When enabled, IP change notifications hide the last segments (IPv4 -> a.b.*.*, IPv6 -> a:b:*:*). Cloudflare DDNS sync still uses the real IP.',
+  ipChangeMaskIp: 'Mask IPs in IP change alerts (e.g. 216.*.*.171)',
+  ipChangeMaskIpTip: 'When enabled, IP change notifications mask the middle segments (IPv4 -> a.*.*.d, IPv6 -> a:*:*:h). Cloudflare DDNS sync still uses the real IP.',
 }

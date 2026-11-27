@@ -4,6 +4,9 @@ import test from 'node:test';
 import worker from '../src/index.js';
 import {
   buildDiscordAlertEmbed,
+  buildProgressBar,
+  DISCORD_STATUS_REFRESH_ID,
+  getLoadLevelIcon,
   handleDiscordInteraction,
   sendDiscordBotNotification,
   verifyDiscordSignature
@@ -199,12 +202,66 @@ test('/status slash command returns Embeds for non-hidden servers and omits hidd
   assert.match(embed.title, /Server Status Overview/);
   assert.match(embed.description, /Total: \*\*2\*\* \| 🟢 Online: \*\*1\*\* \| 🔴 Offline: \*\*1\*\*/);
   assert.equal(embed.fields.length, 2);
+  assert.equal(embed.fields[0].inline, true);
   assert.match(embed.fields[0].name, /Tokyo-01 \[JP\]/);
-  assert.match(embed.fields[0].value, /CPU: \*\*35\.4%\*\* \| RAM: \*\*50\.0%\*\*/);
+  assert.match(embed.fields[0].value, /`CPU` ▰▰▰▱▱▱▱▱ \*\*35\.4%\*\*/);
+  assert.match(embed.fields[0].value, /`RAM` ▰▰▰▰▱▱▱▱ \*\*50\.0%\*\*/);
   assert.match(embed.fields[0].value, /1\.0 MB\/s/);
   assert.match(embed.fields[0].value, /1d 1h 1m/);
-  assert.match(embed.fields[1].name, /US-02 \[US\]/);
+  // US-02 already starts with "US-", so duplicate [US] tag is omitted
+  assert.equal(embed.fields[1].name, '🔴 US-02');
   assert.match(embed.fields[1].value, /Offline/);
+
+  // Refresh button Action Row is attached
+  assert.equal(json.data.components.length, 1);
+  assert.equal(json.data.components[0].type, 1);
+  assert.equal(json.data.components[0].components[0].custom_id, DISCORD_STATUS_REFRESH_ID);
+  assert.equal(json.data.components[0].components[0].label, 'Refresh');
+});
+
+test('progress bars, high-load alerts, and Refresh button (type 3 -> type 7 UPDATE_MESSAGE) work properly', async () => {
+  assert.equal(buildProgressBar(0), '▱▱▱▱▱▱▱▱');
+  assert.equal(buildProgressBar(50), '▰▰▰▰▱▱▱▱');
+  assert.equal(buildProgressBar(91.1), '▰▰▰▰▰▰▰▱');
+  assert.equal(getLoadLevelIcon(30), '🟢');
+  assert.equal(getLoadLevelIcon(70), '🟡');
+  assert.equal(getLoadLevelIcon(91.1), '🔴');
+
+  clearAllCaches();
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
+  const { privateKey, publicKeyHex } = await createEd25519TestKeys();
+  const now = Date.now();
+  const servers = [
+    { id: 'srv-hot', name: 'US-Muse', region: 'us', is_hidden: '0', sort_order: 0, history_partition_id: 1, timestamp: 0 }
+  ];
+  const metricsById = new Map([
+    ['srv-hot', { timestamp: now - 5_000, cpu: 2.5, ram_used: 911, ram_total: 1000, net_in_speed: 46, net_out_speed: 91, uptime: 7380 }]
+  ]);
+  const db = makeDiscordMockDb({
+    servers,
+    metricsById,
+    settings: { notification_language: 'zh' }
+  });
+  const body = JSON.stringify({
+    type: 3,
+    data: { custom_id: DISCORD_STATUS_REFRESH_ID, component_type: 2 }
+  });
+  const ts = '1700000300';
+  const sig = await signInteraction(privateKey, ts, body);
+
+  const res = await handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Signature-Ed25519': sig, 'X-Signature-Timestamp': ts },
+    body
+  }), { DISCORD_PUBLIC_KEY: publicKeyHex, DB: db });
+
+  assert.equal(res.status, 200);
+  const json = await res.json();
+  assert.equal(json.type, 7); // UPDATE_MESSAGE
+  assert.equal(json.data.embeds[0].fields[0].name, '🟢 US-Muse ⚠️');
+  assert.match(json.data.embeds[0].fields[0].value, /91\.1%\*\* 🔴/);
+  assert.equal(json.data.components[0].components[0].label, '刷新');
 });
 
 test('Discord Bot outbound notification sends Embed to channel when no user ID is set', async () => {

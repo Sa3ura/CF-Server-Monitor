@@ -16,6 +16,7 @@ import {
 } from '../utils/config.js';
 
 export const DISCORD_API_BASE = 'https://discord.com/api/v10';
+export const DISCORD_STATUS_REFRESH_ID = 'cfsm:status:refresh';
 const DISCORD_USER_AGENT = 'DiscordBot (https://github.com/huilang-me/CF-Server-Monitor, 1.0)';
 const DISCORD_SNOWFLAKE_RE = /^\d{15,25}$/;
 const DISCORD_ONLINE_THRESHOLD_MS = 300000;
@@ -358,6 +359,56 @@ async function fetchStatusRealtimeMap(env, serverIds) {
   return map;
 }
 
+export function buildProgressBar(percent, length = 8) {
+  const numeric = Number(percent);
+  const clamped = Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) : 0;
+  const filled = Math.round((clamped / 100) * length);
+  return '▰'.repeat(filled) + '▱'.repeat(Math.max(0, length - filled));
+}
+
+export function getLoadLevelIcon(percent) {
+  const numeric = Number(percent);
+  if (!Number.isFinite(numeric) || numeric < 60) return '🟢';
+  if (numeric < 85) return '🟡';
+  return '🔴';
+}
+
+function getInlineLoadBadge(percent) {
+  const numeric = Number(percent);
+  if (!Number.isFinite(numeric) || numeric < 60) return '';
+  return numeric >= 85 ? ' 🔴' : ' 🟡';
+}
+
+function formatServerDisplayName(name, regionCode) {
+  const base = String(name || '').trim();
+  if (!regionCode) return base;
+  const upperBase = base.toUpperCase();
+  const hasRegionPrefix =
+    upperBase.startsWith(`${regionCode}-`) ||
+    upperBase.startsWith(`${regionCode} `) ||
+    upperBase.startsWith(`${regionCode}_`) ||
+    upperBase.startsWith(`[${regionCode}]`);
+  return hasRegionPrefix ? base : `${base} [${regionCode}]`;
+}
+
+export function buildStatusActionRow(settings = {}) {
+  const labels = getNotificationMessages(settings)?.discord || {};
+  return [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 2,
+          label: labels.refresh || 'Refresh',
+          emoji: { name: '🔄' },
+          custom_id: DISCORD_STATUS_REFRESH_ID
+        }
+      ]
+    }
+  ];
+}
+
 function renderDiscordTemplate(template, vars = {}) {
   return String(template || '').replace(/\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g, (_, key) => (
     Object.prototype.hasOwnProperty.call(vars, key) ? String(vars[key] ?? '') : ''
@@ -413,30 +464,43 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
     if (isOnline) onlineCount++;
     else offlineCount++;
 
-    const cpu = Number(merged.cpu || 0).toFixed(1);
+    const cpuNum = Number(merged.cpu || 0);
+    const cpu = cpuNum.toFixed(1);
     const ramTotal = Number(merged.ram_total || 0);
     const ramUsed = Number(merged.ram_used || 0);
-    const ramPct = ramTotal > 0 ? ((ramUsed / ramTotal) * 100).toFixed(1) : '0.0';
+    const ramNum = ramTotal > 0 ? (ramUsed / ramTotal) * 100 : 0;
+    const ramPct = ramNum.toFixed(1);
     const diskTotal = Number(merged.disk_total || 0);
     const diskUsed = Number(merged.disk_used || 0);
-    const diskPct = diskTotal > 0 ? ((diskUsed / diskTotal) * 100).toFixed(1) : '0.0';
+    const diskNum = diskTotal > 0 ? (diskUsed / diskTotal) * 100 : 0;
+    const diskPct = diskNum.toFixed(1);
+    const cpuBar = buildProgressBar(cpuNum);
+    const ramBar = buildProgressBar(ramNum);
+    const diskBar = buildProgressBar(diskNum);
+    const cpuIcon = getLoadLevelIcon(cpuNum);
+    const ramIcon = getLoadLevelIcon(ramNum);
+    const diskIcon = getLoadLevelIcon(diskNum);
+    const peakLoad = Math.max(cpuNum, ramNum);
+    const loadIcon = isOnline ? getLoadLevelIcon(peakLoad) : '⚫';
+    const highLoadSuffix = isOnline && peakLoad >= 85 ? ' ⚠️' : '';
     const down = formatBytesPerSecond(merged.net_in_speed);
     const up = formatBytesPerSecond(merged.net_out_speed);
     const uptime = formatDuration(resolveUptimeSeconds(merged, effectiveMetrics, now));
     const regionCode = merged.region ? String(merged.region).toUpperCase() : '';
     const regionTag = regionCode ? ` [${regionCode}]` : '';
+    const displayName = formatServerDisplayName(merged.name || serverId, regionCode);
     const statusIcon = isOnline ? '🟢' : '🔴';
     const statusText = isOnline ? (labels.online || 'Online') : (labels.offline || 'Offline');
     const lastSeenText = lastTs > 0
       ? (typeof labels.lastSeen === 'function' ? labels.lastSeen(formatDuration((now - lastTs) / 1000)) : `${formatDuration((now - lastTs) / 1000)} ago`)
       : (labels.noReport || 'No report');
     const defaultDetail = isOnline
-      ? `CPU: **${cpu}%** | RAM: **${ramPct}%**\nNet: ↓${down} ↑${up} | Up: **${uptime}**`
+      ? `\`CPU\` ${cpuBar} **${cpu}%**${getInlineLoadBadge(cpuNum)}\n\`RAM\` ${ramBar} **${ramPct}%**${getInlineLoadBadge(ramNum)}\n-# ↓${down} ↑${up} · ${uptime}`
       : `${labels.offline || 'Offline'} · ${lastSeenText}`;
 
     nodeEntries.push({
       isOnline,
-      name: truncateText(`${statusIcon} ${merged.name || serverId}${regionTag}`, 256),
+      name: truncateText(`${statusIcon} ${displayName}${highLoadSuffix}`, 256),
       defaultValue: defaultDetail,
       vars: {
         id: serverId,
@@ -446,11 +510,18 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
         region_tag: regionTag,
         status_icon: statusIcon,
         status: statusText,
+        load_icon: loadIcon,
         cpu,
+        cpu_bar: cpuBar,
+        cpu_icon: cpuIcon,
         ram: ramPct,
+        ram_bar: ramBar,
+        ram_icon: ramIcon,
         ram_used: String(Math.round(ramUsed)),
         ram_total: String(Math.round(ramTotal)),
         disk: diskPct,
+        disk_bar: diskBar,
+        disk_icon: diskIcon,
         net_in: down,
         net_out: up,
         uptime,
@@ -523,7 +594,7 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
     fields.push({
       name: entry.name,
       value: renderedValue,
-      inline: false
+      inline: true
     });
   }
 
@@ -557,6 +628,24 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
+async function buildStatusInteractionData(env) {
+  const [servers, settings] = await Promise.all([
+    getAllServers(env.DB, false),
+    loadSettings(env.DB)
+  ]);
+  const serverIds = servers.map(server => String(server.id || '')).filter(Boolean);
+  const [latestMetricsMap, realtimeMap] = await Promise.all([
+    getLatestMetricsForAllServers(env.DB),
+    fetchStatusRealtimeMap(env, serverIds)
+  ]);
+  const embed = buildStatusCommandEmbed(servers, latestMetricsMap, realtimeMap, Date.now(), settings);
+  const components = buildStatusActionRow(settings);
+  return {
+    embeds: [embed],
+    components
+  };
+}
+
 export async function handleDiscordInteraction(request, env) {
   const publicKey = String(env?.DISCORD_PUBLIC_KEY || '').trim();
   const signature = request.headers.get('X-Signature-Ed25519') || '';
@@ -588,21 +677,10 @@ export async function handleDiscordInteraction(request, env) {
     const commandName = String(interaction?.data?.name || '').toLowerCase();
     if (commandName === 'status') {
       try {
-        const [servers, settings] = await Promise.all([
-          getAllServers(env.DB, false),
-          loadSettings(env.DB)
-        ]);
-        const serverIds = servers.map(server => String(server.id || '')).filter(Boolean);
-        const [latestMetricsMap, realtimeMap] = await Promise.all([
-          getLatestMetricsForAllServers(env.DB),
-          fetchStatusRealtimeMap(env, serverIds)
-        ]);
-        const embed = buildStatusCommandEmbed(servers, latestMetricsMap, realtimeMap, Date.now(), settings);
+        const data = await buildStatusInteractionData(env);
         return jsonResponse({
           type: 4,
-          data: {
-            embeds: [embed]
-          }
+          data
         });
       } catch (e) {
         console.error('[Discord] /status command failed:', e);
@@ -620,6 +698,37 @@ export async function handleDiscordInteraction(request, env) {
       type: 4,
       data: {
         content: `Unknown command: /${commandName || 'unknown'}`,
+        flags: 64
+      }
+    });
+  }
+
+  // MESSAGE_COMPONENT (e.g. Refresh button on /status card)
+  if (interaction?.type === 3) {
+    const customId = String(interaction?.data?.custom_id || '');
+    if (customId === DISCORD_STATUS_REFRESH_ID) {
+      try {
+        const data = await buildStatusInteractionData(env);
+        return jsonResponse({
+          type: 7,
+          data
+        });
+      } catch (e) {
+        console.error('[Discord] /status refresh button failed:', e);
+        return jsonResponse({
+          type: 4,
+          data: {
+            content: 'Failed to refresh server status.',
+            flags: 64
+          }
+        });
+      }
+    }
+
+    return jsonResponse({
+      type: 4,
+      data: {
+        content: 'Unknown action.',
         flags: 64
       }
     });
