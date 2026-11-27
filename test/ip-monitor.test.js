@@ -13,6 +13,7 @@ import {
 import { handleAdminAPI } from '../src/handlers/admin.js';
 import { handleServerAPI } from '../src/handlers/dashboard.js';
 import { generateToken } from '../src/middleware/auth.js';
+import { sendNotification, stripMarkdownAsterisks } from '../src/services/notification.js';
 import { clearAllCaches } from '../src/utils/cache.js';
 import { clearAppearanceSettingsCache, clearSiteSettingsCache } from '../src/utils/settings.js';
 
@@ -51,10 +52,14 @@ function makeIpMonitorDb(server, settings = {}, appearance = {}) {
   };
 }
 
-test('extractReportedIps prefers reported IPs and falls back to CF-Connecting-IP per address family', () => {
+test('extractReportedIps only falls back to CF-Connecting-IP when both reported IPs are blank', () => {
   assert.deepEqual(
     extractReportedIps({ ip_v4: '1.2.3.4', ip_v6: '0' }, '2001:db8::10'),
-    { v4: '1.2.3.4', v6: '2001:db8::10' }
+    { v4: '1.2.3.4', v6: '' }
+  );
+  assert.deepEqual(
+    extractReportedIps({ ip_v4: '0', ip_v6: '0' }, '2001:db8::10'),
+    { v4: '', v6: '2001:db8::10' }
   );
   assert.deepEqual(
     extractReportedIps({ ip_v4: '0', ip_v6: '0' }, '::ffff:198.51.100.42'),
@@ -363,5 +368,171 @@ test('admin edit validates DDNS domain and dashboard strips IP tracking / DDNS f
   const publicJson = await publicRes.json();
   for (const field of ['last_ipv4', 'last_ipv6', 'pending_ip', 'pending_ip_count', 'ddns_enabled', 'ddns_domain', 'ddns_record_type']) {
     assert.equal(field in publicJson, false, `${field} should not be exposed in public API`);
+  }
+
+  // export_servers strips runtime IP tracking fields while preserving DDNS config fields
+  const exportRes = await handleAdminAPI(new Request('https://example.com/admin/api', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action: 'export_servers' })
+  }), env, sys);
+  assert.equal(exportRes.status, 200);
+  const exportJson = await exportRes.json();
+  assert.equal(exportJson.servers.length, 1);
+  for (const field of ['last_ipv4', 'last_ipv6', 'pending_ip', 'pending_ip_count']) {
+    assert.equal(field in exportJson.servers[0], false, `${field} should be omitted from export_servers`);
+  }
+  assert.equal(exportJson.servers[0].ddns_enabled, '1');
+  assert.equal(exportJson.servers[0].ddns_domain, 'node-a.example.com');
+  assert.equal(exportJson.servers[0].ddns_record_type, 'A');
+});
+
+test('evaluateIpChange uses CAS optimistic locking to prevent duplicate DDNS updates and alerts under concurrency', async () => {
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
+  const row = {
+    id: 'srv-cas-1',
+    name: 'CAS-Node',
+    last_ipv4: '1.1.1.1',
+    last_ipv6: '',
+    pending_ip: '2.2.2.2',
+    pending_ip_count: 1,
+    ddns_enabled: '1',
+    ddns_domain: 'cas.example.com',
+    ddns_record_type: 'A'
+  };
+  const settings = {
+    jwt_secret: 'x'.repeat(32),
+    tg_bot_token: '123:tg',
+    tg_chat_id: '999',
+    notification_language: 'zh'
+  };
+
+  // Stateful CAS-aware D1 mock
+  const casDb = {
+    prepare(sql) {
+      return {
+        args: [],
+        bind(...args) { this.args = args; return this; },
+        async first() {
+          if (sql.includes("key = 'site_options'")) return { value: JSON.stringify(settings) };
+          if (sql.includes("key = 'appearance_options'")) return { value: JSON.stringify({}) };
+          return null;
+        },
+        async all() {
+          return { results: [] };
+        },
+        async run() {
+          if (sql.startsWith('UPDATE servers SET last_ipv4')) {
+            const [
+              nextV4, nextV6, nextPendingIp, nextPendingCount,
+              id, expectedV4, expectedV6, expectedPendingIp, expectedPendingCount
+            ] = this.args;
+            if (
+              row.id !== id ||
+              String(row.last_ipv4 || '') !== String(expectedV4) ||
+              String(row.last_ipv6 || '') !== String(expectedV6) ||
+              String(row.pending_ip || '') !== String(expectedPendingIp) ||
+              (Number(row.pending_ip_count) || 0) !== Number(expectedPendingCount)
+            ) {
+              return { success: true, meta: { changes: 0 } };
+            }
+            // Yield microtask to allow concurrent caller to race before CAS state commits? No: atomic check-and-set in SQLite!
+            row.last_ipv4 = nextV4;
+            row.last_ipv6 = nextV6;
+            row.pending_ip = nextPendingIp;
+            row.pending_ip_count = nextPendingCount;
+            return { success: true, meta: { changes: 1 } };
+          }
+          return { success: true, meta: { changes: 1 } };
+        }
+      };
+    }
+  };
+
+  const fetchCalls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    fetchCalls.push({ url: u, method: options.method || 'GET' });
+    if (u.includes('/dns_records?')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() { return { success: true, result: [{ id: 'rec-cas', type: 'A', content: '1.1.1.1' }] }; }
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() { return { success: true }; },
+      async text() { return ''; }
+    };
+  };
+
+  const snapshot1 = { ...row };
+  const snapshot2 = { ...row };
+  const pendingTasks = [];
+  const waitUntil = (p) => pendingTasks.push(p);
+
+  try {
+    const [res1, res2] = await Promise.all([
+      evaluateIpChange({ DB: casDb, CF_DNS_API_TOKEN: 'cf-token', CF_ZONE_ID: 'z-1' }, snapshot1, { ip_v4: '2.2.2.2' }, { waitUntil }),
+      evaluateIpChange({ DB: casDb, CF_DNS_API_TOKEN: 'cf-token', CF_ZONE_ID: 'z-1' }, snapshot2, { ip_v4: '2.2.2.2' }, { waitUntil })
+    ]);
+    await Promise.all(pendingTasks);
+
+    const changedCount = [res1, res2].filter(r => r.changed).length;
+    const conflictedCount = [res1, res2].filter(r => r.conflicted).length;
+    assert.equal(changedCount, 1);
+    assert.equal(conflictedCount, 1);
+    assert.equal(row.last_ipv4, '2.2.2.2');
+    assert.equal(row.pending_ip, '');
+    assert.equal(row.pending_ip_count, 0);
+
+    const patchCalls = fetchCalls.filter(c => c.method === 'PATCH');
+    const tgCalls = fetchCalls.filter(c => c.url.includes('api.telegram.org'));
+    assert.equal(patchCalls.length, 1);
+    assert.equal(tgCalls.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('stripMarkdownAsterisks preserves masked IP asterisks for WeCom and OneBot plain-text channels', async () => {
+  assert.equal(
+    stripMarkdownAsterisks('**Alert** IPv4: 216.*.*.171 -> 104.*.*.237 / IPv6: 2001:*:*:7334'),
+    'Alert IPv4: 216.*.*.171 -> 104.*.*.237 / IPv6: 2001:*:*:7334'
+  );
+
+  const payloads = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    payloads.push({ url: String(url), body: JSON.parse(options.body) });
+    return { ok: true, status: 200, async json() { return { errcode: 0 }; }, async text() { return ''; } };
+  };
+
+  try {
+    const msg = '**Node** IPv4: 216.*.*.171 -> 104.*.*.237\nIPv6: 2001:*:*:7334';
+    await sendNotification({
+      tg_bot_token: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=test',
+      notification_template: '{{message}}'
+    }, msg, { event: 'IP Changed', emoji: '🌐', clients: ['Node'] });
+
+    await sendNotification({
+      tg_bot_token: 'onebot:http://127.0.0.1:3000/send_private_msg?access_token=test',
+      tg_chat_id: '123456',
+      notification_template: '{{message}}'
+    }, msg, { event: 'IP Changed', emoji: '🌐', clients: ['Node'] });
+
+    assert.equal(payloads.length, 2);
+    assert.equal(
+      payloads[0].body.text.content,
+      'Node IPv4: 216.*.*.171 -> 104.*.*.237\nIPv6: 2001:*:*:7334'
+    );
+    assert.match(payloads[1].body.message[0].data.text, /Node IPv4: 216\.\*\.\*\.171 -> 104\.\*\.\*\.237/);
+    assert.match(payloads[1].body.message[0].data.text, /2001:\*:\*:7334/);
+  } finally {
+    globalThis.fetch = originalFetch;
   }
 });

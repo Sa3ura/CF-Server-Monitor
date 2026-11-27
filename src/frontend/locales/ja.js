@@ -606,7 +606,7 @@ export default {
   ddnsDomainRequired: 'DDNS を有効にする場合はドメインが必須です',
   invalidDdnsDomain: 'DDNS ドメインの形式が無効です',
   discordStatusTemplate: '/status 返信テンプレート（任意）',
-  discordStatusTemplateTip: '/status の表示形式をカスタマイズします。{{status_icon}}、{{status}}、{{load_icon}}、{{name}}、{{region}}、{{group}}、{{cpu}}、{{cpu_bar}}、{{cpu_icon}}、{{ram}}、{{ram_bar}}、{{ram_icon}}、{{ram_used}}、{{ram_total}}、{{disk}}、{{disk_bar}}、{{net_in}}、{{net_out}}、{{uptime}}、{{last_seen}}、{{detail}}、または {{#servers}}...{{/servers}} ループと {{total}}、{{online}}、{{offline}}、{{time}}、{{site_title}} が利用できます。',
+  discordStatusTemplateTip: '/status の表示形式をカスタマイズします。{{id}}、{{status_icon}}、{{status}}、{{load_icon}}、{{name}}、{{region}}、{{region_tag}}、{{group}}、{{cpu}}、{{cpu_bar}}、{{cpu_icon}}、{{cpu_badge}}、{{ram}}、{{ram_bar}}、{{ram_icon}}、{{ram_badge}}、{{ram_used}}、{{ram_total}}、{{disk}}、{{disk_bar}}、{{disk_icon}}、{{disk_badge}}、{{net_in}}、{{net_out}}、{{net_in_short}}、{{net_out_short}}、{{uptime}}、{{uptime_short}}、{{last_seen}}、{{detail}}、または {{#servers}}...{{/servers}} ループと {{total}}、{{online}}、{{offline}}、{{time}}、{{site_title}} が利用できます。',
   discordStatusTemplatePlaceholder: '空欄でデフォルト表示。例: CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'IP 変更通知で IP をマスク表示する（例: 216.*.*.171）',
   ipChangeMaskIpTip: '有効にすると通知内の IP の中間セグメントをマスクします（IPv4 は a.*.*.d、IPv6 は a:*:*:h）。Cloudflare DDNS の更新には実際の IP が使用されます。',

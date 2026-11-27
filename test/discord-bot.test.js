@@ -5,14 +5,17 @@ import worker from '../src/index.js';
 import {
   buildDiscordAlertEmbed,
   buildProgressBar,
+  buildStatusCommandEmbed,
   DISCORD_EXPIRE_REFRESH_ID,
   DISCORD_NODE_REFRESH_PREFIX,
   DISCORD_PING_REFRESH_PREFIX,
+  DISCORD_SIGNATURE_MAX_AGE_SECONDS,
   DISCORD_SLASH_COMMANDS,
   DISCORD_STATUS_REFRESH_ID,
   DISCORD_TRAFFIC_REFRESH_ID,
   getLoadLevelIcon,
   handleDiscordInteraction,
+  isAuthorizedDiscordInteraction,
   sendDiscordBotNotification,
   verifyDiscordSignature
 } from '../src/services/discord.js';
@@ -85,9 +88,10 @@ function makeDiscordMockDb({ servers = [], metricsById = new Map(), settings = {
   };
 }
 
-test('Ed25519 signature verification validates valid signatures and rejects tampered payloads', async () => {
+test('Ed25519 signature verification validates valid signatures and rejects tampered payloads or stale timestamps', async () => {
   const { privateKey, publicKeyHex } = await createEd25519TestKeys();
-  const timestamp = '1700000000';
+  const nowSec = Math.floor(Date.now() / 1000);
+  const timestamp = String(nowSec);
   const rawBody = JSON.stringify({ type: 1 });
   const signature = await signInteraction(privateKey, timestamp, rawBody);
 
@@ -96,6 +100,18 @@ test('Ed25519 signature verification validates valid signatures and rejects tamp
   assert.equal(await verifyDiscordSignature(rawBody, '00'.repeat(64), timestamp, publicKeyHex), false);
   assert.equal(await verifyDiscordSignature(rawBody, signature, '', publicKeyHex), false);
   assert.equal(await verifyDiscordSignature(rawBody, signature, timestamp, 'invalid-hex'), false);
+
+  const staleTs = String(nowSec - DISCORD_SIGNATURE_MAX_AGE_SECONDS - 1);
+  const staleSig = await signInteraction(privateKey, staleTs, rawBody);
+  assert.equal(await verifyDiscordSignature(rawBody, staleSig, staleTs, publicKeyHex, { now: nowSec * 1000 }), false);
+
+  const futureTs = String(nowSec + DISCORD_SIGNATURE_MAX_AGE_SECONDS + 1);
+  const futureSig = await signInteraction(privateKey, futureTs, rawBody);
+  assert.equal(await verifyDiscordSignature(rawBody, futureSig, futureTs, publicKeyHex, { now: nowSec * 1000 }), false);
+
+  const nonDigitTs = `${timestamp}abc`;
+  const nonDigitSig = await signInteraction(privateKey, nonDigitTs, rawBody);
+  assert.equal(await verifyDiscordSignature(rawBody, nonDigitSig, nonDigitTs, publicKeyHex, { now: nowSec * 1000 }), false);
 });
 
 test('POST /api/discord/interactions bypasses Turnstile & JWT, rejects invalid sig with 401, and responds to PING', async () => {
@@ -190,7 +206,7 @@ test('/status slash command returns Embeds for non-hidden servers and omits hidd
   clearAppearanceSettingsCache();
   const env = { DISCORD_PUBLIC_KEY: publicKeyHex, DB: db };
   const body = JSON.stringify({ type: 2, data: { name: 'status' } });
-  const ts = '1700000100';
+  const ts = String(Math.floor(Date.now() / 1000));
   const sig = await signInteraction(privateKey, ts, body);
 
   const response = await handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
@@ -258,7 +274,7 @@ test('progress bars, high-load alerts, and Refresh button (type 3 -> type 7 UPDA
     type: 3,
     data: { custom_id: DISCORD_STATUS_REFRESH_ID, component_type: 2 }
   });
-  const ts = '1700000300';
+  const ts = String(Math.floor(Date.now() / 1000));
   const sig = await signInteraction(privateKey, ts, body);
 
   const res = await handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
@@ -430,7 +446,7 @@ test('/status supports custom per-node template and {{#servers}} loop template',
     }
   });
   const body = JSON.stringify({ type: 2, data: { name: 'status' } });
-  const ts = '1700000200';
+  const ts = String(Math.floor(Date.now() / 1000));
   const sig = await signInteraction(privateKey, ts, body);
 
   const res1 = await handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
@@ -619,7 +635,7 @@ test('/node, /traffic, /expire, /ping commands, autocomplete, and refresh button
 
   async function callInteraction(payload) {
     const body = JSON.stringify(payload);
-    const ts = '1700000300';
+    const ts = String(Math.floor(Date.now() / 1000));
     const sig = await signInteraction(privateKey, ts, body);
     const res = await handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
       method: 'POST',
@@ -656,7 +672,7 @@ test('/node, /traffic, /expire, /ping commands, autocomplete, and refresh button
   assert.equal(nodeEmbed.title, '🟢 US-Muse ⚠️');
   assert.equal(nodeEmbed.footer.text, 'Yori Monitor');
   assert.doesNotMatch(JSON.stringify(nodeEmbed), /198\.51\.100\.77/);
-  assert.match(JSON.stringify(nodeEmbed), /muse\.example\.com/);
+  assert.doesNotMatch(JSON.stringify(nodeEmbed), /muse\.example\.com/);
   assert.equal(nodeRes.data.components[0].components[0].custom_id, `${DISCORD_NODE_REFRESH_PREFIX}srv-us`);
 
   const nodeRefresh = await callInteraction({
@@ -754,4 +770,268 @@ test('admin sync_discord_commands registers all 5 slash commands via Discord API
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('Discord interactions reject replay timestamps, enforce allowlist/private-site access, and respect display switches', async () => {
+  clearAllCaches();
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
+  const { privateKey, publicKeyHex } = await createEd25519TestKeys();
+  const now = Date.now();
+  const nowSec = Math.floor(now / 1000);
+  const futureDate = (days) => {
+    const d = new Date(now + days * 86400000);
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+  };
+
+  const servers = [
+    {
+      id: 'srv-1',
+      name: 'Node-1',
+      region: 'us',
+      is_hidden: '0',
+      sort_order: 0,
+      history_partition_id: 1,
+      traffic_limit: '100',
+      traffic_calc_type: 'total',
+      expire_date: futureDate(10),
+      price: '$9.99/月',
+      billing_cycle: 'month',
+      auto_renewal: '0',
+      ddns_enabled: '1',
+      ddns_domain: 'secret-ddns.example.com'
+    }
+  ];
+  const metricsById = new Map([
+    ['srv-1', {
+      timestamp: now - 5_000,
+      cpu: 10,
+      ram_used: 512,
+      ram_total: 1024,
+      net_rx_monthly: 20 * 1024 ** 3,
+      net_tx_monthly: 10 * 1024 ** 3
+    }]
+  ]);
+
+  async function postInteraction(payload, env, ts = String(Math.floor(Date.now() / 1000))) {
+    const body = JSON.stringify(payload);
+    const sig = await signInteraction(privateKey, ts, body);
+    return handleDiscordInteraction(new Request('https://monitor.example.com/api/discord/interactions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Signature-Ed25519': sig,
+        'X-Signature-Timestamp': ts
+      },
+      body
+    }), env);
+  }
+
+  // 1) Replay timestamp outside +-300s returns 401
+  const replayEnv = {
+    DISCORD_PUBLIC_KEY: publicKeyHex,
+    DB: makeDiscordMockDb({ servers, metricsById, settings: { notification_language: 'en' } })
+  };
+  const replayRes = await postInteraction({ type: 2, data: { name: 'status' } }, replayEnv, String(nowSec - 301));
+  assert.equal(replayRes.status, 401);
+
+  // 2) Private site without allowlist blocks commands and autocomplete, while PING stays allowed
+  clearSiteSettingsCache();
+  const privateEnv = {
+    DISCORD_PUBLIC_KEY: publicKeyHex,
+    DB: makeDiscordMockDb({
+      servers,
+      metricsById,
+      settings: { is_public: 'false', notification_language: 'en' }
+    })
+  };
+  const pingPrivate = await postInteraction({ type: 1 }, privateEnv);
+  assert.equal(pingPrivate.status, 200);
+  assert.deepEqual(await pingPrivate.json(), { type: 1 });
+
+  const privateStatus = await (await postInteraction({ type: 2, data: { name: 'status' }, user: { id: '11111111111111111' } }, privateEnv)).json();
+  assert.equal(privateStatus.type, 4);
+  assert.equal(privateStatus.data.flags, 64);
+  assert.match(privateStatus.data.content, /not authorized/i);
+
+  const privateAc = await (await postInteraction({
+    type: 4,
+    data: { name: 'node', options: [{ name: 'name', value: 'Node', focused: true }] },
+    user: { id: '11111111111111111' }
+  }, privateEnv)).json();
+  assert.equal(privateAc.type, 8);
+  assert.deepEqual(privateAc.data.choices, []);
+
+  // 3) Configured discord_user_id / discord_channel_id acts as allowlist
+  assert.equal(isAuthorizedDiscordInteraction({ user: { id: '99999999999999999' } }, {
+    discord_user_id: '99999999999999999',
+    discord_channel_id: '88888888888888888'
+  }), true);
+  assert.equal(isAuthorizedDiscordInteraction({ channel_id: '88888888888888888', member: { user: { id: '77777777777777777' } } }, {
+    discord_user_id: '99999999999999999',
+    discord_channel_id: '88888888888888888'
+  }), true);
+  assert.equal(isAuthorizedDiscordInteraction({ channel_id: '11111111111111111', user: { id: '77777777777777777' } }, {
+    discord_user_id: '99999999999999999',
+    discord_channel_id: '88888888888888888'
+  }), false);
+
+  clearSiteSettingsCache();
+  const allowlistEnv = {
+    DISCORD_PUBLIC_KEY: publicKeyHex,
+    DB: makeDiscordMockDb({
+      servers,
+      metricsById,
+      settings: {
+        is_public: 'false',
+        discord_user_id: '99999999999999999',
+        discord_channel_id: '88888888888888888',
+        notification_language: 'zh',
+        show_tf: 'false',
+        show_expire: 'false',
+        show_price: 'false'
+      }
+    })
+  };
+
+  const strangerRefresh = await (await postInteraction({
+    type: 3,
+    channel_id: '11111111111111111',
+    user: { id: '22222222222222222' },
+    data: { custom_id: DISCORD_STATUS_REFRESH_ID }
+  }, allowlistEnv)).json();
+  assert.equal(strangerRefresh.type, 4);
+  assert.equal(strangerRefresh.data.flags, 64);
+  assert.match(strangerRefresh.data.content, /无权限/);
+
+  // 4) Authorized caller respects show_tf / show_expire / show_price display switches
+  const authedNode = await (await postInteraction({
+    type: 2,
+    channel_id: '88888888888888888',
+    data: { name: 'node', options: [{ name: 'name', value: 'srv-1' }] }
+  }, allowlistEnv)).json();
+  const nodeJsonStr = JSON.stringify(authedNode.data.embeds[0]);
+  assert.doesNotMatch(nodeJsonStr, /secret-ddns\.example\.com/);
+  assert.doesNotMatch(nodeJsonStr, /本月流量|Monthly Traffic/);
+  assert.doesNotMatch(nodeJsonStr, /账单与到期|Billing/);
+  assert.doesNotMatch(nodeJsonStr, /\$9\.99/);
+
+  const authedTraffic = await (await postInteraction({
+    type: 2,
+    user: { id: '99999999999999999' },
+    data: { name: 'traffic' }
+  }, allowlistEnv)).json();
+  assert.equal(authedTraffic.data.embeds[0].fields.length, 0);
+  assert.match(authedTraffic.data.embeds[0].description, /站点设置已隐藏/);
+
+  const authedExpire = await (await postInteraction({
+    type: 2,
+    user: { id: '99999999999999999' },
+    data: { name: 'expire' }
+  }, allowlistEnv)).json();
+  assert.equal(authedExpire.data.embeds[0].fields.length, 0);
+  assert.match(authedExpire.data.embeds[0].description, /站点设置已隐藏/);
+
+  // show_expire=true + show_price=false hides price while keeping expiration calendar
+  clearSiteSettingsCache();
+  const noPriceEnv = {
+    DISCORD_PUBLIC_KEY: publicKeyHex,
+    DB: makeDiscordMockDb({
+      servers,
+      metricsById,
+      settings: {
+        is_public: 'true',
+        notification_language: 'en',
+        show_expire: 'true',
+        show_price: 'false'
+      }
+    })
+  };
+  const expireNoPrice = await (await postInteraction({ type: 2, data: { name: 'expire' } }, noPriceEnv)).json();
+  assert.equal(expireNoPrice.data.embeds[0].fields.length, 1);
+  assert.doesNotMatch(JSON.stringify(expireNoPrice.data.embeds[0]), /\$9\.99|Monthly est/);
+});
+
+test('Discord {{#servers}} loop preserves $ patterns and Embed charBudget includes footer length', () => {
+  const now = Date.now();
+  const servers = Array.from({ length: 20 }, (_, i) => ({
+    id: `srv-${i}`,
+    name: i === 0 ? 'US-$&-Price-$1' : `Node-${i}-LongName-${'x'.repeat(25)}`,
+    region: 'us',
+    is_hidden: '0',
+    history_partition_id: i + 1
+  }));
+  const metricsById = new Map(
+    servers.map(s => [s.id, {
+      timestamp: now - 5_000,
+      cpu: 50,
+      ram_used: 512,
+      ram_total: 1024,
+      net_in_speed: 1024,
+      net_out_speed: 1024,
+      uptime: 3600
+    }])
+  );
+
+  // 1) $& / $1 in server names must not expand in {{#servers}} replacement
+  const loopEmbed = buildStatusCommandEmbed(servers.slice(0, 1), metricsById, new Map(), now, {
+    notification_language: 'en',
+    discord_status_template: 'List:\n{{#servers}}{{name}}={{cpu}}%\n{{/servers}}'
+  });
+  assert.equal(loopEmbed.description, 'List:\nUS-$&-Price-$1=50.0%');
+
+  // 2) Long site_title (1800 chars) + 20 nodes stays strictly within Discord 6000-char Embed limit
+  const longFooterEmbed = buildStatusCommandEmbed(servers, metricsById, new Map(), now, {
+    notification_language: 'en',
+    site_title: 'T'.repeat(1800),
+    discord_status_template: 'A'.repeat(250)
+  });
+  const totalChars =
+    longFooterEmbed.title.length +
+    longFooterEmbed.description.length +
+    longFooterEmbed.footer.text.length +
+    longFooterEmbed.fields.reduce((sum, f) => sum + f.name.length + f.value.length, 0);
+  assert.ok(totalChars <= 6000, `Expected embed char count <= 6000, got ${totalChars}`);
+  assert.ok(longFooterEmbed.fields.length < 20);
+  assert.match(longFooterEmbed.description, /omitted/);
+});
+
+test('admin save_settings validates enabled Discord Bot unconditionally even without tg_notify/expire/resource rules', async () => {
+  clearSiteSettingsCache();
+  clearAppearanceSettingsCache();
+  const sys = { password: 'hash', jwt_secret: 'x'.repeat(32) };
+  const db = makeDiscordMockDb({});
+  const env = { API_SECRET: 'secret', DB: db };
+  const token = await generateToken(env, sys);
+
+  const postSave = (extra) => handleAdminAPI(new Request('https://monitor.example.com/admin/api', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      action: 'save_settings',
+      settings: {
+        tg_notify: '0',
+        expire_reminder: '0',
+        resource_alert_rules: [],
+        discord_bot_enabled: 'true',
+        ...extra
+      }
+    })
+  }), env, sys);
+
+  const noToken = await postSave({ discord_bot_token: '', discord_channel_id: '123456789012345678' });
+  assert.equal(noToken.status, 400);
+  assert.equal((await noToken.json()).error, 'discordBotTokenRequired');
+
+  const noTarget = await postSave({ discord_bot_token: 'bot-tok', discord_channel_id: '', discord_user_id: '' });
+  assert.equal(noTarget.status, 400);
+  assert.equal((await noTarget.json()).error, 'discordTargetRequired');
+
+  const badId = await postSave({ discord_bot_token: 'bot-tok', discord_channel_id: 'abc' });
+  assert.equal(badId.status, 400);
+  assert.equal((await badId.json()).error, 'invalidDiscordId');
+
+  const okRes = await postSave({ discord_bot_token: 'bot-tok', discord_channel_id: '123456789012345678' });
+  assert.equal(okRes.status, 200);
+  assert.equal((await okRes.json()).success, true);
 });

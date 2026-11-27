@@ -858,6 +858,17 @@ async function withSmtpRetry(task, retries = NOTIFICATION_MAX_RETRIES) {
   throw lastError || new Error('Max retries exceeded');
 }
 
+const MASKED_IP_SEGMENT_RE = /(\b\d{1,3}\.\*\.\*\.\d{1,3}\b|\b[0-9a-fA-F]{1,4}:\*:\*:[0-9a-fA-F]{1,4}\b)/g;
+
+export function stripMarkdownAsterisks(text) {
+  const source = String(text || '');
+  if (!source.includes('*')) return source;
+  return source
+    .split(MASKED_IP_SEGMENT_RE)
+    .map((segment, index) => (index % 2 === 1 ? segment : segment.replace(/\*/g, '')))
+    .join('');
+}
+
 async function sendSmtpNotification(settings, context, formattedMsg) {
   let config;
   try {
@@ -869,7 +880,7 @@ async function sendSmtpNotification(settings, context, formattedMsg) {
     // 动态导入：cloudflare-smtp 依赖 cloudflare:sockets，仅在运行时（Workers）加载
     const { sendMail } = await import('cloudflare-smtp');
     const subject = `${context.emoji || ''} ${context.event || getNotificationMessages(settings).events.notification}`.trim();
-    const text = String(formattedMsg || '').replace(/\*/g, '');
+    const text = stripMarkdownAsterisks(formattedMsg);
     await withSmtpRetry(() => sendMail(
       {
         host: config.host,
@@ -930,7 +941,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
           {
             type: 'text',
             data: {
-              text: `${title}\n${String(formattedMsg || '').replace(/\*/g, '')}\n`
+              text: `${title}\n${stripMarkdownAsterisks(formattedMsg)}\n`
             }
           }
         ]
@@ -1001,7 +1012,7 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
         body: JSON.stringify({
           msgtype: "text",
           text: {
-            content: formattedMsg.replace(/\*/g, '')
+            content: stripMarkdownAsterisks(formattedMsg)
           }
         })
       });

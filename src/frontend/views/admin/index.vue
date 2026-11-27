@@ -692,7 +692,15 @@ const fetchLatestAgentReleaseVersion = async () => {
 const getMessage = (msg) => {
   if (typeof msg === 'string') {
     const translated = t(msg)
-    return translated !== msg ? translated : msg
+    if (translated !== msg) return translated
+    const prefixed = msg.match(/^([A-Za-z0-9_]+):\s*(.+)$/s)
+    if (prefixed) {
+      const translatedPrefix = t(prefixed[1])
+      if (translatedPrefix !== prefixed[1]) {
+        return `${translatedPrefix}: ${prefixed[2]}`
+      }
+    }
+    return msg
   }
   return ''
 }

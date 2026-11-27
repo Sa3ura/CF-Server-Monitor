@@ -943,6 +943,20 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         }
       }
 
+      const discordBotEnabled = settings.discord_bot_enabled !== undefined
+        ? isDiscordBotEnabled({ discord_bot_enabled: settings.discord_bot_enabled })
+        : isDiscordBotEnabled(sys);
+      if (discordBotEnabled) {
+        const discordValidation = validateDiscordBotTarget({
+          discord_bot_token: settings.discord_bot_token !== undefined ? settings.discord_bot_token : sys?.discord_bot_token,
+          discord_channel_id: settings.discord_channel_id !== undefined ? settings.discord_channel_id : sys?.discord_channel_id,
+          discord_user_id: settings.discord_user_id !== undefined ? settings.discord_user_id : sys?.discord_user_id
+        });
+        if (!discordValidation.valid) {
+          return createBadRequestResponse(discordValidation.error);
+        }
+      }
+
       // 如果 tg_notify 或 expire_reminder 开启，验证 tg_bot_token 不为空
       const hasResourceAlertRulesInput = settings.resource_alert_rules !== undefined;
       const tgNotify = settings.tg_notify !== undefined
@@ -956,10 +970,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         ? normalizeResourceAlertRules(settings.resource_alert_rules)
         : currentResourceAlertRules;
       const resourceAlertEnabled = normalizedResourceAlertRules.length > 0;
-      if (tgNotify !== '0' || expireReminder !== '0' || resourceAlertEnabled) {
-        const discordBotEnabled = settings.discord_bot_enabled !== undefined
-          ? isDiscordBotEnabled({ discord_bot_enabled: settings.discord_bot_enabled })
-          : isDiscordBotEnabled(sys);
+      if (!discordBotEnabled && (tgNotify !== '0' || expireReminder !== '0' || resourceAlertEnabled)) {
         const webhookEnabled = settings.notification_webhook_enabled !== undefined
           ? normalizeBooleanSetting(settings.notification_webhook_enabled) === 'true'
           : normalizeBooleanSetting(sys?.notification_webhook_enabled) === 'true';
@@ -969,16 +980,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         const effectiveTgBotToken = settings.tg_bot_token !== undefined
           ? settings.tg_bot_token
           : sys?.tg_bot_token;
-        if (discordBotEnabled) {
-          const discordValidation = validateDiscordBotTarget({
-            discord_bot_token: settings.discord_bot_token !== undefined ? settings.discord_bot_token : sys?.discord_bot_token,
-            discord_channel_id: settings.discord_channel_id !== undefined ? settings.discord_channel_id : sys?.discord_channel_id,
-            discord_user_id: settings.discord_user_id !== undefined ? settings.discord_user_id : sys?.discord_user_id
-          });
-          if (!discordValidation.valid) {
-            return createBadRequestResponse(discordValidation.error);
-          }
-        } else if (webhookEnabled) {
+        if (webhookEnabled) {
           if (!effectiveWebhookUrl || String(effectiveWebhookUrl).trim().length === 0) {
             return createBadRequestResponse('notificationWebhookUrlRequired');
           }
@@ -1366,11 +1368,19 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       try {
         // 顺序读取：settings 走缓存，真正的 D1 查询只有一次，没必要并发打同一连接。
         const servers = await env.DB.prepare('SELECT * FROM servers ORDER BY sort_order ASC').all();
+        const exportedServers = (servers.results || []).map((server) => {
+          const item = { ...server };
+          delete item.last_ipv4;
+          delete item.last_ipv6;
+          delete item.pending_ip;
+          delete item.pending_ip_count;
+          return item;
+        });
         const siteSettings = await loadSiteSettings(env.DB);
         const appearanceSettings = await loadAppearanceOptions(env.DB);
         return createSuccessResponse({
           success: true,
-          servers: servers.results || [],
+          servers: exportedServers,
           settings: pickExportableSettings(siteSettings, appearanceSettings),
           message: 'serversExported'
         });

@@ -767,11 +767,10 @@ async function handleUpdateCore(request, env, ctx, discovery, authState = null) 
       patchCache: (serverId, value) => patchServerDetailCache(serverId, { traffic_alert_state: value })
     }));
     // 节点 IP 变动检测与可选 DDNS 同步：防抖并写回状态后异步触发通知与 DNS 更新
-    await evaluateIpChange(env, serverDetail, historyMetrics, {
+    ctx.waitUntil(evaluateIpChange(env, serverDetail, historyMetrics, {
       clientIp: resolveClientIpFromRequest(request),
-      patchCache: (serverId, fields) => patchServerDetailCache(serverId, fields),
-      waitUntil: (promise) => ctx.waitUntil(promise)
-    });
+      patchCache: (serverId, fields) => patchServerDetailCache(serverId, fields)
+    }));
 
     const clientConfigSchema = normalizeAgentConfigSchemaVersion(request.headers.get(AGENT_CONFIG_SCHEMA_HEADER));
     if (!clientConfigSchema) {

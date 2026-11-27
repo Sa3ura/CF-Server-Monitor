@@ -606,7 +606,7 @@ export default {
   ddnsDomainRequired: 'Domain DDNS wajib diisi saat DDNS diaktifkan',
   invalidDdnsDomain: 'Format domain DDNS tidak valid',
   discordStatusTemplate: 'Templat Balasan /status (Opsional)',
-  discordStatusTemplateTip: 'Sesuaikan format tampilan node /status. Mendukung {{status_icon}}, {{status}}, {{load_icon}}, {{name}}, {{region}}, {{group}}, {{cpu}}, {{cpu_bar}}, {{cpu_icon}}, {{ram}}, {{ram_bar}}, {{ram_icon}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{disk_bar}}, {{net_in}}, {{net_out}}, {{uptime}}, {{last_seen}}, {{detail}}, atau loop {{#servers}}...{{/servers}} dengan {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
+  discordStatusTemplateTip: 'Sesuaikan format tampilan node /status. Mendukung {{id}}, {{status_icon}}, {{status}}, {{load_icon}}, {{name}}, {{region}}, {{region_tag}}, {{group}}, {{cpu}}, {{cpu_bar}}, {{cpu_icon}}, {{cpu_badge}}, {{ram}}, {{ram_bar}}, {{ram_icon}}, {{ram_badge}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{disk_bar}}, {{disk_icon}}, {{disk_badge}}, {{net_in}}, {{net_out}}, {{net_in_short}}, {{net_out_short}}, {{uptime}}, {{uptime_short}}, {{last_seen}}, {{detail}}, atau loop {{#servers}}...{{/servers}} dengan {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
   discordStatusTemplatePlaceholder: 'Kosongkan untuk Embed default, mis. CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'Samarkan IP pada notifikasi perubahan IP (mis. 216.*.*.171)',
   ipChangeMaskIpTip: 'Jika aktif, notifikasi menyamarkan segmen tengah IP (IPv4 -> a.*.*.d, IPv6 -> a:*:*:h). Sinkronisasi DDNS Cloudflare tetap memakai IP asli.',

@@ -25,6 +25,7 @@ import {
 } from '../utils/config.js';
 
 export const DISCORD_API_BASE = 'https://discord.com/api/v10';
+export const DISCORD_SIGNATURE_MAX_AGE_SECONDS = 300;
 export const DISCORD_STATUS_REFRESH_ID = 'cfsm:status:refresh';
 export const DISCORD_NODE_REFRESH_PREFIX = 'cfsm:node:refresh:';
 export const DISCORD_TRAFFIC_REFRESH_ID = 'cfsm:traffic:refresh';
@@ -114,10 +115,32 @@ const DISCORD_USER_AGENT = 'DiscordBot (https://github.com/huilang-me/CF-Server-
 const DISCORD_SNOWFLAKE_RE = /^\d{15,25}$/;
 const DISCORD_ONLINE_THRESHOLD_MS = 300000;
 const DISCORD_DO_FETCH_TIMEOUT_MS = 700;
+const DISCORD_API_TIMEOUT_MS = 10000;
+const DISCORD_DM_CHANNEL_CACHE_MAX_ENTRIES = 50;
 const DISCORD_EMBED_MAX_FIELDS = 25;
 const DISCORD_EMBED_TOTAL_CHAR_LIMIT = 5800;
 
 const dmChannelCache = new Map();
+
+function createTokenFingerprint(token) {
+  const value = String(token || '');
+  let h1 = 0x811c9dc5;
+  let h2 = 0x9e3779b9;
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    h1 = Math.imul(h1 ^ code, 0x01000193) >>> 0;
+    h2 = Math.imul(h2 ^ (code + i), 0x85ebca6b) >>> 0;
+  }
+  return `${value.length}:${h1.toString(16)}:${h2.toString(16)}`;
+}
+
+function setDmChannelCacheEntry(key, channelId) {
+  dmChannelCache.delete(key);
+  dmChannelCache.set(key, channelId);
+  while (dmChannelCache.size > DISCORD_DM_CHANNEL_CACHE_MAX_ENTRIES) {
+    dmChannelCache.delete(dmChannelCache.keys().next().value);
+  }
+}
 
 export function isDiscordBotEnabled(settings = {}) {
   return normalizeBooleanSetting(settings?.discord_bot_enabled) === 'true';
@@ -246,6 +269,9 @@ async function discordApiRequest(path, token, body, retries = NOTIFICATION_MAX_R
         'User-Agent': DISCORD_USER_AGENT
       };
       const init = { method, headers };
+      if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        init.signal = AbortSignal.timeout(DISCORD_API_TIMEOUT_MS);
+      }
       if (method !== 'GET' && body !== undefined) {
         headers['Content-Type'] = 'application/json';
         init.body = JSON.stringify(body);
@@ -322,7 +348,7 @@ export async function syncDiscordSlashCommands(settings = {}) {
 async function resolveDiscordTargetChannelId(token, channelId, userId) {
   if (!userId) return { targetChannelId: channelId, isDm: false };
 
-  const cacheKey = `${token}:${userId}`;
+  const cacheKey = `${createTokenFingerprint(token)}:${userId}`;
   const cachedChannelId = dmChannelCache.get(cacheKey);
   if (cachedChannelId) {
     return { targetChannelId: cachedChannelId, isDm: true, cacheKey };
@@ -334,7 +360,7 @@ async function resolveDiscordTargetChannelId(token, channelId, userId) {
   if (!dmChannel?.id) {
     throw new Error('Failed to create Discord DM channel');
   }
-  dmChannelCache.set(cacheKey, dmChannel.id);
+  setDmChannelCacheEntry(cacheKey, dmChannel.id);
   return { targetChannelId: dmChannel.id, isDm: true, cacheKey };
 }
 
@@ -383,9 +409,16 @@ function hexToUint8Array(hex) {
   return bytes;
 }
 
-export async function verifyDiscordSignature(rawBody, signatureHex, timestamp, publicKeyHex) {
-  const ts = String(timestamp || '');
-  if (!ts) return false;
+export async function verifyDiscordSignature(rawBody, signatureHex, timestamp, publicKeyHex, options = {}) {
+  const ts = String(timestamp ?? '');
+  if (!ts || !/^\d{1,15}$/.test(ts)) return false;
+
+  const nowMs = Number.isFinite(options?.now) ? options.now : Date.now();
+  const nowSec = Math.floor(nowMs / 1000);
+  const maxAgeSec = Number.isFinite(options?.maxAgeSeconds) ? options.maxAgeSeconds : DISCORD_SIGNATURE_MAX_AGE_SECONDS;
+  if (Math.abs(nowSec - Number(ts)) > maxAgeSec) {
+    return false;
+  }
 
   const signature = hexToUint8Array(signatureHex);
   const publicKey = hexToUint8Array(publicKeyHex);
@@ -406,6 +439,33 @@ export async function verifyDiscordSignature(rawBody, signatureHex, timestamp, p
   } catch (_) {
     return false;
   }
+}
+
+export function isAuthorizedDiscordInteraction(interaction, settings = {}) {
+  const allowedUserId = normalizeDiscordSnowflake(settings?.discord_user_id);
+  const allowedChannelId = normalizeDiscordSnowflake(settings?.discord_channel_id);
+  const actorUserId = String(interaction?.user?.id || interaction?.member?.user?.id || '').trim();
+  const channelId = String(interaction?.channel_id || '').trim();
+
+  const hasAllowlist = Boolean(allowedUserId || allowedChannelId);
+  if (hasAllowlist) {
+    return Boolean(
+      (allowedUserId && actorUserId === allowedUserId) ||
+      (allowedChannelId && channelId === allowedChannelId)
+    );
+  }
+
+  return settings?.is_public === undefined
+    ? true
+    : normalizeBooleanSetting(settings.is_public) !== 'false';
+}
+
+function resolveDisplayFlags(settings = {}) {
+  return {
+    showTraffic: settings?.show_tf === undefined ? true : normalizeBooleanSetting(settings.show_tf) === 'true',
+    showExpire: settings?.show_expire === undefined ? true : normalizeBooleanSetting(settings.show_expire) === 'true',
+    showPrice: settings?.show_price === undefined ? true : normalizeBooleanSetting(settings.show_price) === 'true'
+  };
 }
 
 function formatBytesPerSecond(bytesPerSec) {
@@ -605,22 +665,8 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
   const nodeEntries = [];
 
   for (const server of servers) {
-    const serverId = String(server.id || '');
-    const dbMetrics = latestMetricsMap.get(serverId) || null;
-    const rtMetrics = realtimeMap.get(serverId) || null;
-
-    let effectiveMetrics = dbMetrics;
-    if (rtMetrics && (!dbMetrics || Number(rtMetrics.timestamp || 0) >= Number(dbMetrics.timestamp || 0))) {
-      effectiveMetrics = dbMetrics ? { ...dbMetrics, ...rtMetrics } : rtMetrics;
-    }
-
-    const merged = { ...server };
-    if (effectiveMetrics) {
-      mergeMetricsIntoServer(merged, effectiveMetrics);
-    }
-
-    const lastTs = Number(effectiveMetrics?.timestamp || merged.last_updated || 0);
-    const isOnline = lastTs > 0 && (now - lastTs) < DISCORD_ONLINE_THRESHOLD_MS;
+    const snap = mergeServerSnapshot(server, latestMetricsMap, realtimeMap, now);
+    const { serverId, merged, effectiveMetrics, lastTs, isOnline, regionCode, displayName } = snap;
     if (isOnline) onlineCount++;
     else offlineCount++;
 
@@ -653,9 +699,7 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
     const uptimeSeconds = resolveUptimeSeconds(merged, effectiveMetrics, now);
     const uptime = formatDuration(uptimeSeconds);
     const uptimeShort = formatDuration(uptimeSeconds, 2);
-    const regionCode = merged.region ? String(merged.region).toUpperCase() : '';
     const regionTag = regionCode ? ` [${regionCode}]` : '';
-    const displayName = formatServerDisplayName(merged.name || serverId, regionCode);
     const statusIcon = isOnline ? '🟢' : '🔴';
     const statusText = isOnline ? (labels.online || 'Online') : (labels.offline || 'Offline');
     const lastSeenText = lastTs > 0
@@ -730,7 +774,7 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
       ? nodeEntries.map(entry => renderDiscordTemplate(itemTemplate, { ...topVars, ...entry.vars })).join('\n')
       : (labels.noServers || 'No visible servers configured.');
     const renderedBody = renderDiscordTemplate(
-      customTemplate.replace(loopMatch[0], renderedItems),
+      customTemplate.replace(loopMatch[0], () => renderedItems),
       topVars
     ).trim();
 
@@ -747,7 +791,7 @@ export function buildStatusCommandEmbed(servers = [], latestMetricsMap = new Map
   const title = truncateText(`🖥️ ${labels.statusTitle || 'Server Status Overview'}`, 256);
   const summaryLine = `${labels.total || 'Total'}: **${servers.length}** | 🟢 ${labels.online || 'Online'}: **${onlineCount}** | 🔴 ${labels.offline || 'Offline'}: **${offlineCount}**`;
   const fields = [];
-  let charBudget = DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - summaryLine.length - 64;
+  let charBudget = Math.max(0, DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - summaryLine.length - footerText.length - 120);
   let overflowCount = 0;
 
   for (const entry of nodeEntries) {
@@ -996,23 +1040,27 @@ export function buildNodeDetailEmbed(server, latestMetricsMap = new Map(), realt
     });
   }
 
+  const { showTraffic, showExpire, showPrice } = resolveDisplayFlags(settings);
+
   // Monthly traffic
-  const limitGb = normalizeTrafficLimitGb(merged.traffic_limit);
-  const usedBytes = getTrafficUsageBytes(merged.net_rx_monthly, merged.net_tx_monthly, merged.traffic_calc_type);
-  if (limitGb > 0 || usedBytes > 0) {
-    if (limitGb > 0) {
-      const pct = (usedBytes / (limitGb * GB)) * 100;
-      fields.push({
-        name: labels.traffic || 'Monthly Traffic',
-        value: `${buildProgressBar(pct)} **${pct.toFixed(1)}%**${getInlineLoadBadge(pct)}\n-# ${formatBytes(usedBytes)} / ${limitGb} GB`,
-        inline: true
-      });
-    } else {
-      fields.push({
-        name: labels.traffic || 'Monthly Traffic',
-        value: `↓ ${formatBytes(merged.net_rx_monthly)} · ↑ ${formatBytes(merged.net_tx_monthly)}\n-# ${labels.unlimitedTraffic || 'Unlimited'}`,
-        inline: true
-      });
+  if (showTraffic) {
+    const limitGb = normalizeTrafficLimitGb(merged.traffic_limit);
+    const usedBytes = getTrafficUsageBytes(merged.net_rx_monthly, merged.net_tx_monthly, merged.traffic_calc_type);
+    if (limitGb > 0 || usedBytes > 0) {
+      if (limitGb > 0) {
+        const pct = (usedBytes / (limitGb * GB)) * 100;
+        fields.push({
+          name: labels.traffic || 'Monthly Traffic',
+          value: `${buildProgressBar(pct)} **${pct.toFixed(1)}%**${getInlineLoadBadge(pct)}\n-# ${formatBytes(usedBytes)} / ${limitGb} GB`,
+          inline: true
+        });
+      } else {
+        fields.push({
+          name: labels.traffic || 'Monthly Traffic',
+          value: `↓ ${formatBytes(merged.net_rx_monthly)} · ↑ ${formatBytes(merged.net_tx_monthly)}\n-# ${labels.unlimitedTraffic || 'Unlimited'}`,
+          inline: true
+        });
+      }
     }
   }
 
@@ -1034,11 +1082,11 @@ export function buildNodeDetailEmbed(server, latestMetricsMap = new Map(), realt
 
   // Billing & expiry
   const expireDate = String(merged.expire_date || '').trim();
-  const expireSerial = parseDateSerial(expireDate);
-  const priceText = String(merged.price || '').trim();
+  const expireSerial = showExpire ? parseDateSerial(expireDate) : NaN;
+  const priceText = showPrice ? String(merged.price || '').trim() : '';
   if (Number.isFinite(expireSerial) || (priceText && priceText !== '-1')) {
     const parts = [];
-    if (Number.isFinite(expireSerial)) {
+    if (showExpire && Number.isFinite(expireSerial)) {
       const todaySerial = getZonedDateSerial(now, settings?.notification_timezone);
       const days = expireSerial - todaySerial;
       const renewBadge = isEnabledFlag(merged.auto_renewal)
@@ -1046,25 +1094,18 @@ export function buildNodeDetailEmbed(server, latestMetricsMap = new Map(), realt
         : (labels.manualRenew || 'Manual renew');
       parts.push(`\`${expireDate}\` (${formatExpireDaysLabel(days, messages, labels)} · ${renewBadge})`);
     }
-    if (priceText && priceText !== '-1') {
+    if (showPrice && priceText && priceText !== '-1') {
       const currency = normalizeCurrency(merged.currency) || detectCurrencySymbol(priceText);
       const normalizedAmount = normalizePrice(priceText);
       parts.push(normalizedAmount && normalizedAmount !== '-1' ? `${currency}${normalizedAmount}` : priceText);
     }
-    fields.push({
-      name: labels.billing || 'Billing & Expiry',
-      value: parts.join(' · '),
-      inline: true
-    });
-  }
-
-  // DDNS status (never exposes raw IP)
-  if (isEnabledFlag(merged.ddns_enabled) && String(merged.ddns_domain || '').trim()) {
-    fields.push({
-      name: labels.ddns || 'DDNS',
-      value: `\`${String(merged.ddns_domain).trim()}\` (${String(merged.ddns_record_type || 'AUTO').toUpperCase()})`,
-      inline: true
-    });
+    if (parts.length > 0) {
+      fields.push({
+        name: labels.billing || 'Billing & Expiry',
+        value: parts.join(' · '),
+        inline: true
+      });
+    }
   }
 
   const color = !isOnline ? 0xef4444 : (peakLoad >= 85 ? 0xf59e0b : 0x22c55e);
@@ -1083,6 +1124,19 @@ export function buildTrafficCommandEmbed(servers = [], latestMetricsMap = new Ma
   const labels = messages?.discord || {};
   const siteTitle = String(settings?.site_title || '').trim();
   const title = truncateText(`📊 ${labels.trafficTitle || 'Monthly Traffic Ranking'}`, 256);
+  const footerText = truncateText(siteTitle || 'CF Server Monitor', 2048);
+  const { showTraffic } = resolveDisplayFlags(settings);
+
+  if (!showTraffic) {
+    return {
+      title,
+      description: truncateText(labels.featureDisabled || 'This information is hidden by site settings.', 4096),
+      color: 0x5865f2,
+      fields: [],
+      footer: { text: footerText },
+      timestamp: new Date(now).toISOString()
+    };
+  }
 
   const limitedEntries = [];
   const unlimitedEntries = [];
@@ -1111,7 +1165,7 @@ export function buildTrafficCommandEmbed(servers = [], latestMetricsMap = new Ma
   const ordered = [...limitedEntries, ...unlimitedEntries];
 
   const fields = [];
-  let charBudget = DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - 200;
+  let charBudget = Math.max(0, DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - footerText.length - 200);
   let overflowCount = 0;
 
   for (const item of ordered) {
@@ -1154,7 +1208,7 @@ export function buildTrafficCommandEmbed(servers = [], latestMetricsMap = new Ma
     description: truncateText(description, 4096),
     color,
     fields,
-    footer: { text: truncateText(siteTitle || 'CF Server Monitor', 2048) },
+    footer: { text: footerText },
     timestamp: new Date(now).toISOString()
   };
 }
@@ -1164,6 +1218,20 @@ export function buildExpireCommandEmbed(servers = [], now = Date.now(), settings
   const labels = messages?.discord || {};
   const siteTitle = String(settings?.site_title || '').trim();
   const title = truncateText(`📅 ${labels.expireTitle || 'Server Expiration Calendar'}`, 256);
+  const footerText = truncateText(siteTitle || 'CF Server Monitor', 2048);
+  const { showExpire, showPrice } = resolveDisplayFlags(settings);
+
+  if (!showExpire) {
+    return {
+      title,
+      description: truncateText(labels.featureDisabled || 'This information is hidden by site settings.', 4096),
+      color: 0x5865f2,
+      fields: [],
+      footer: { text: footerText },
+      timestamp: new Date(now).toISOString()
+    };
+  }
+
   const todaySerial = getZonedDateSerial(now, settings?.notification_timezone);
 
   const expireEntries = [];
@@ -1174,16 +1242,18 @@ export function buildExpireCommandEmbed(servers = [], now = Date.now(), settings
     const displayName = formatServerDisplayName(server.name || server.id, regionCode);
 
     // Accumulate billing estimate per currency
-    const priceRaw = String(server.price || '').trim();
-    const normalizedAmount = normalizePrice(priceRaw);
-    const amountNum = normalizedAmount && normalizedAmount !== '-1' ? Number(normalizedAmount) : 0;
-    const currency = normalizeCurrency(server.currency) || detectCurrencySymbol(priceRaw) || '$';
     let priceSummary = '';
-    if (amountNum > 0) {
-      const cycle = normalizeBillingCycle(detectBillingCycle(priceRaw) || server.billing_cycle);
-      const months = BILLING_CYCLE_MONTHS[cycle] || 1;
-      monthlyByCurrency.set(currency, (monthlyByCurrency.get(currency) || 0) + (amountNum / months));
-      priceSummary = ` · ${currency}${amountNum.toFixed(2)}`;
+    if (showPrice) {
+      const priceRaw = String(server.price || '').trim();
+      const normalizedAmount = normalizePrice(priceRaw);
+      const amountNum = normalizedAmount && normalizedAmount !== '-1' ? Number(normalizedAmount) : 0;
+      const currency = normalizeCurrency(server.currency) || detectCurrencySymbol(priceRaw) || '$';
+      if (amountNum > 0) {
+        const cycle = normalizeBillingCycle(detectBillingCycle(priceRaw) || server.billing_cycle);
+        const months = BILLING_CYCLE_MONTHS[cycle] || 1;
+        monthlyByCurrency.set(currency, (monthlyByCurrency.get(currency) || 0) + (amountNum / months));
+        priceSummary = ` · ${currency}${amountNum.toFixed(2)}`;
+      }
     }
 
     const expireDate = String(server.expire_date || '').trim();
@@ -1226,7 +1296,7 @@ export function buildExpireCommandEmbed(servers = [], now = Date.now(), settings
   }
 
   const fields = [];
-  let charBudget = DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - descLines.join('\n').length - 128;
+  let charBudget = Math.max(0, DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - descLines.join('\n').length - footerText.length - 128);
   let overflowCount = 0;
 
   for (const item of expireEntries) {
@@ -1258,7 +1328,7 @@ export function buildExpireCommandEmbed(servers = [], now = Date.now(), settings
     description: truncateText(descLines.join('\n'), 4096),
     color,
     fields,
-    footer: { text: truncateText(siteTitle || 'CF Server Monitor', 2048) },
+    footer: { text: footerText },
     timestamp: new Date(now).toISOString()
   };
 }
@@ -1267,6 +1337,7 @@ export function buildPingCommandEmbed(servers = [], latestMetricsMap = new Map()
   const messages = getNotificationMessages(settings);
   const labels = messages?.discord || {};
   const siteTitle = String(settings?.site_title || '').trim();
+  const footerText = truncateText(siteTitle || 'CF Server Monitor', 2048);
 
   if (targetServer) {
     const snap = mergeServerSnapshot(targetServer, latestMetricsMap, realtimeMap, now);
@@ -1288,7 +1359,7 @@ export function buildPingCommandEmbed(servers = [], latestMetricsMap = new Map()
         : (labels.noPingData || 'No latency probe data available yet.'),
       color,
       fields: fields.slice(0, DISCORD_EMBED_MAX_FIELDS),
-      footer: { text: truncateText(siteTitle || 'CF Server Monitor', 2048) },
+      footer: { text: footerText },
       timestamp: new Date(now).toISOString()
     };
   }
@@ -1308,7 +1379,7 @@ export function buildPingCommandEmbed(servers = [], latestMetricsMap = new Map()
   rows.sort((a, b) => a.avgPing - b.avgPing);
 
   const fields = [];
-  let charBudget = DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - 160;
+  let charBudget = Math.max(0, DISCORD_EMBED_TOTAL_CHAR_LIMIT - title.length - footerText.length - 160);
   let overflowCount = 0;
 
   for (const row of rows) {
@@ -1348,7 +1419,7 @@ export function buildPingCommandEmbed(servers = [], latestMetricsMap = new Map()
     description: truncateText(description, 4096),
     color,
     fields,
-    footer: { text: truncateText(siteTitle || 'CF Server Monitor', 2048) },
+    footer: { text: footerText },
     timestamp: new Date(now).toISOString()
   };
 }
@@ -1369,10 +1440,10 @@ function jsonResponse(payload, status = 200) {
   });
 }
 
-async function loadVisibleStatusContext(env) {
+async function loadVisibleStatusContext(env, preloadedSettings = null) {
   const [servers, settings] = await Promise.all([
     getAllServers(env.DB, false),
-    loadSettings(env.DB)
+    preloadedSettings ? Promise.resolve(preloadedSettings) : loadSettings(env.DB)
   ]);
   const serverIds = servers.map(server => String(server.id || '')).filter(Boolean);
   const [latestMetricsMap, realtimeMap] = await Promise.all([
@@ -1382,8 +1453,8 @@ async function loadVisibleStatusContext(env) {
   return { servers, settings, latestMetricsMap, realtimeMap };
 }
 
-async function buildStatusInteractionData(env) {
-  const { servers, settings, latestMetricsMap, realtimeMap } = await loadVisibleStatusContext(env);
+async function buildStatusInteractionData(env, preloadedSettings = null) {
+  const { servers, settings, latestMetricsMap, realtimeMap } = await loadVisibleStatusContext(env, preloadedSettings);
   const embed = buildStatusCommandEmbed(servers, latestMetricsMap, realtimeMap, Date.now(), settings);
   return {
     embeds: [embed],
@@ -1391,8 +1462,8 @@ async function buildStatusInteractionData(env) {
   };
 }
 
-async function buildNodeInteractionData(env, query) {
-  const { servers, settings, latestMetricsMap, realtimeMap } = await loadVisibleStatusContext(env);
+async function buildNodeInteractionData(env, query, preloadedSettings = null) {
+  const { servers, settings, latestMetricsMap, realtimeMap } = await loadVisibleStatusContext(env, preloadedSettings);
   const matched = resolveMatchingServer(servers, query);
   if (!matched) {
     const labels = getNotificationMessages(settings)?.discord || {};
@@ -1408,8 +1479,8 @@ async function buildNodeInteractionData(env, query) {
   };
 }
 
-async function buildTrafficInteractionData(env) {
-  const { servers, settings, latestMetricsMap, realtimeMap } = await loadVisibleStatusContext(env);
+async function buildTrafficInteractionData(env, preloadedSettings = null) {
+  const { servers, settings, latestMetricsMap, realtimeMap } = await loadVisibleStatusContext(env, preloadedSettings);
   const embed = buildTrafficCommandEmbed(servers, latestMetricsMap, realtimeMap, Date.now(), settings);
   return {
     embeds: [embed],
@@ -1417,10 +1488,10 @@ async function buildTrafficInteractionData(env) {
   };
 }
 
-async function buildExpireInteractionData(env) {
+async function buildExpireInteractionData(env, preloadedSettings = null) {
   const [servers, settings] = await Promise.all([
     getAllServers(env.DB, false),
-    loadSettings(env.DB)
+    preloadedSettings ? Promise.resolve(preloadedSettings) : loadSettings(env.DB)
   ]);
   const embed = buildExpireCommandEmbed(servers, Date.now(), settings);
   return {
@@ -1429,8 +1500,8 @@ async function buildExpireInteractionData(env) {
   };
 }
 
-async function buildPingInteractionData(env, query = '') {
-  const { servers, settings, latestMetricsMap, realtimeMap } = await loadVisibleStatusContext(env);
+async function buildPingInteractionData(env, query = '', preloadedSettings = null) {
+  const { servers, settings, latestMetricsMap, realtimeMap } = await loadVisibleStatusContext(env, preloadedSettings);
   let targetServer = null;
   if (query) {
     targetServer = resolveMatchingServer(servers, query);
@@ -1503,8 +1574,14 @@ export async function handleDiscordInteraction(request, env) {
     return jsonResponse({ type: 1 });
   }
 
+  const settings = await loadSettings(env.DB);
+  const authorized = isAuthorizedDiscordInteraction(interaction, settings);
+
   // APPLICATION_COMMAND_AUTOCOMPLETE
   if (interaction?.type === 4) {
+    if (!authorized) {
+      return jsonResponse({ type: 8, data: { choices: [] } });
+    }
     const commandName = String(interaction?.data?.name || '').toLowerCase();
     if (commandName === 'node' || commandName === 'ping') {
       try {
@@ -1519,19 +1596,29 @@ export async function handleDiscordInteraction(request, env) {
 
   // APPLICATION_COMMAND
   if (interaction?.type === 2) {
+    if (!authorized) {
+      const labels = getNotificationMessages(settings)?.discord || {};
+      return jsonResponse({
+        type: 4,
+        data: {
+          content: labels.unauthorized || 'You are not authorized to use this command.',
+          flags: 64
+        }
+      });
+    }
     const commandName = String(interaction?.data?.name || '').toLowerCase();
     try {
       let data = null;
       if (commandName === 'status') {
-        data = await buildStatusInteractionData(env);
+        data = await buildStatusInteractionData(env, settings);
       } else if (commandName === 'node') {
-        data = await buildNodeInteractionData(env, getCommandOptionValue(interaction, 'name'));
+        data = await buildNodeInteractionData(env, getCommandOptionValue(interaction, 'name'), settings);
       } else if (commandName === 'traffic') {
-        data = await buildTrafficInteractionData(env);
+        data = await buildTrafficInteractionData(env, settings);
       } else if (commandName === 'expire') {
-        data = await buildExpireInteractionData(env);
+        data = await buildExpireInteractionData(env, settings);
       } else if (commandName === 'ping') {
-        data = await buildPingInteractionData(env, getCommandOptionValue(interaction, 'name'));
+        data = await buildPingInteractionData(env, getCommandOptionValue(interaction, 'name'), settings);
       }
 
       if (data) {
@@ -1559,21 +1646,31 @@ export async function handleDiscordInteraction(request, env) {
 
   // MESSAGE_COMPONENT (in-place Refresh buttons across all command cards)
   if (interaction?.type === 3) {
+    if (!authorized) {
+      const labels = getNotificationMessages(settings)?.discord || {};
+      return jsonResponse({
+        type: 4,
+        data: {
+          content: labels.unauthorized || 'You are not authorized to use this command.',
+          flags: 64
+        }
+      });
+    }
     const customId = String(interaction?.data?.custom_id || '');
     try {
       let data = null;
       if (customId === DISCORD_STATUS_REFRESH_ID) {
-        data = await buildStatusInteractionData(env);
+        data = await buildStatusInteractionData(env, settings);
       } else if (customId.startsWith(DISCORD_NODE_REFRESH_PREFIX)) {
-        data = await buildNodeInteractionData(env, customId.slice(DISCORD_NODE_REFRESH_PREFIX.length));
+        data = await buildNodeInteractionData(env, customId.slice(DISCORD_NODE_REFRESH_PREFIX.length), settings);
       } else if (customId === DISCORD_TRAFFIC_REFRESH_ID) {
-        data = await buildTrafficInteractionData(env);
+        data = await buildTrafficInteractionData(env, settings);
       } else if (customId === DISCORD_EXPIRE_REFRESH_ID) {
-        data = await buildExpireInteractionData(env);
+        data = await buildExpireInteractionData(env, settings);
       } else if (customId === DISCORD_PING_REFRESH_PREFIX) {
-        data = await buildPingInteractionData(env, '');
+        data = await buildPingInteractionData(env, '', settings);
       } else if (customId.startsWith(`${DISCORD_PING_REFRESH_PREFIX}:`)) {
-        data = await buildPingInteractionData(env, customId.slice(DISCORD_PING_REFRESH_PREFIX.length + 1));
+        data = await buildPingInteractionData(env, customId.slice(DISCORD_PING_REFRESH_PREFIX.length + 1), settings);
       }
 
       if (data) {

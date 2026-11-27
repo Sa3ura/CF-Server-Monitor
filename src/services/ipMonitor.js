@@ -7,7 +7,14 @@ import { getNotificationMessages } from './notificationMessages.js';
 export const ALLOWED_DDNS_RECORD_TYPES = ['AUTO', 'A', 'AAAA'];
 const DDNS_DOMAIN_RE = /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/;
 const CLOUDFLARE_API_BASE = 'https://api.cloudflare.com/client/v4';
+const CF_DNS_API_TIMEOUT_MS = 10000;
 const IP_CHANGE_REQUIRED_HEARTBEATS = 2;
+
+function buildTimeoutSignal(timeoutMs) {
+  return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(timeoutMs)
+    : undefined;
+}
 
 export function normalizeDdnsDomain(value) {
   return String(value ?? '').trim().toLowerCase().replace(/\.+$/, '');
@@ -55,11 +62,11 @@ export function extractReportedIps(metrics = {}, fallbackClientIp = '') {
   let v4 = parsedV4?.family === 'v4' ? parsedV4.value : '';
   let v6 = parsedV6?.family === 'v6' ? parsedV6.value : '';
 
-  if (fallbackClientIp) {
+  if (!v4 && !v6 && fallbackClientIp) {
     const parsedFallback = normalizeClientIp(fallbackClientIp);
-    if (parsedFallback?.family === 'v4' && !v4) {
+    if (parsedFallback?.family === 'v4') {
       v4 = parsedFallback.value;
-    } else if (parsedFallback?.family === 'v6' && !v6) {
+    } else if (parsedFallback?.family === 'v6') {
       v6 = parsedFallback.value;
     }
   }
@@ -155,7 +162,10 @@ export async function syncCloudflareDnsRecord(env, { domain, recordType, newIp }
 
   try {
     const queryUrl = `${CLOUDFLARE_API_BASE}/zones/${encodeURIComponent(zoneId)}/dns_records?type=${encodeURIComponent(recordType)}&name=${encodeURIComponent(normalizedDomain)}`;
-    const listResponse = await fetch(queryUrl, { method: 'GET', headers });
+    const listInit = { method: 'GET', headers };
+    const listSignal = buildTimeoutSignal(CF_DNS_API_TIMEOUT_MS);
+    if (listSignal) listInit.signal = listSignal;
+    const listResponse = await fetch(queryUrl, listInit);
     const listData = await listResponse.json().catch(() => null);
 
     if (!listResponse.ok || !listData?.success) {
@@ -183,11 +193,14 @@ export async function syncCloudflareDnsRecord(env, { domain, recordType, newIp }
     if (record.ttl !== undefined) patchBody.ttl = record.ttl;
     if (typeof record.proxied === 'boolean') patchBody.proxied = record.proxied;
 
-    const patchResponse = await fetch(patchUrl, {
+    const patchInit = {
       method: 'PATCH',
       headers,
       body: JSON.stringify(patchBody)
-    });
+    };
+    const patchSignal = buildTimeoutSignal(CF_DNS_API_TIMEOUT_MS);
+    if (patchSignal) patchInit.signal = patchSignal;
+    const patchResponse = await fetch(patchUrl, patchInit);
     const patchData = await patchResponse.json().catch(() => null);
 
     if (!patchResponse.ok || !patchData?.success) {
@@ -354,15 +367,25 @@ export async function evaluateIpChange(env, server, metrics, options = {}) {
       pending_ip_count: serializedPending.pending_ip_count
     };
 
+    const expectedLastV4 = server.last_ipv4 == null ? '' : String(server.last_ipv4);
+    const expectedLastV6 = server.last_ipv6 == null ? '' : String(server.last_ipv6);
+    const expectedPendingIp = server.pending_ip == null ? '' : String(server.pending_ip);
+    const expectedPendingCount = Number(server.pending_ip_count) || 0;
+
+    let updateResult;
     try {
-      await env.DB.prepare(
-        'UPDATE servers SET last_ipv4 = ?, last_ipv6 = ?, pending_ip = ?, pending_ip_count = ? WHERE id = ?'
+      updateResult = await env.DB.prepare(
+        "UPDATE servers SET last_ipv4 = ?, last_ipv6 = ?, pending_ip = ?, pending_ip_count = ? WHERE id = ? AND COALESCE(last_ipv4, '') = ? AND COALESCE(last_ipv6, '') = ? AND COALESCE(pending_ip, '') = ? AND COALESCE(pending_ip_count, 0) = ?"
       ).bind(
         nextFields.last_ipv4,
         nextFields.last_ipv6,
         nextFields.pending_ip,
         nextFields.pending_ip_count,
-        server.id
+        server.id,
+        expectedLastV4,
+        expectedLastV6,
+        expectedPendingIp,
+        expectedPendingCount
       ).run();
     } catch (e) {
       const message = String(e?.message || e);
@@ -371,6 +394,10 @@ export async function evaluateIpChange(env, server, metrics, options = {}) {
         return { changed: false, changes: [] };
       }
       throw e;
+    }
+
+    if (updateResult?.meta && Number(updateResult.meta.changes) === 0) {
+      return { changed: false, changes: [], conflicted: true };
     }
 
     // Mutate passed object & patch isolate/DO caches to prevent duplicate triggers before TTL expiry

@@ -606,7 +606,7 @@ export default {
   ddnsDomainRequired: '啟用 DDNS 時必須填寫綁定網域',
   invalidDdnsDomain: 'DDNS 網域格式無效',
   discordStatusTemplate: '/status 回覆範本（可選）',
-  discordStatusTemplateTip: '自訂 /status 節點顯示格式。支援變數 {{status_icon}}、{{status}}、{{load_icon}}、{{name}}、{{region}}、{{group}}、{{cpu}}、{{cpu_bar}}、{{cpu_icon}}、{{ram}}、{{ram_bar}}、{{ram_icon}}、{{ram_used}}、{{ram_total}}、{{disk}}、{{disk_bar}}、{{net_in}}、{{net_out}}、{{uptime}}、{{last_seen}}、{{detail}}，或使用 {{#servers}}...{{/servers}} 迴圈搭配 {{total}}、{{online}}、{{offline}}、{{time}}、{{site_title}}。',
+  discordStatusTemplateTip: '自訂 /status 節點顯示格式。支援變數 {{id}}、{{status_icon}}、{{status}}、{{load_icon}}、{{name}}、{{region}}、{{region_tag}}、{{group}}、{{cpu}}、{{cpu_bar}}、{{cpu_icon}}、{{cpu_badge}}、{{ram}}、{{ram_bar}}、{{ram_icon}}、{{ram_badge}}、{{ram_used}}、{{ram_total}}、{{disk}}、{{disk_bar}}、{{disk_icon}}、{{disk_badge}}、{{net_in}}、{{net_out}}、{{net_in_short}}、{{net_out_short}}、{{uptime}}、{{uptime_short}}、{{last_seen}}、{{detail}}，或使用 {{#servers}}...{{/servers}} 迴圈搭配 {{total}}、{{online}}、{{offline}}、{{time}}、{{site_title}}。',
   discordStatusTemplatePlaceholder: '留空使用預設卡片；可填單節點格式如 CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'IP 變更通知隱藏完整 IP（如 216.*.*.171）',
   ipChangeMaskIpTip: '開啟後，節點 IP 變更告警僅顯示遮罩網段（IPv4 為 a.*.*.d，IPv6 為 a:*:*:h），不影響 Cloudflare DDNS 自動更新真實 IP。',

@@ -606,7 +606,7 @@ export default {
   ddnsDomainRequired: 'El dominio DDNS es obligatorio cuando DDNS está activado',
   invalidDdnsDomain: 'Formato de dominio DDNS no válido',
   discordStatusTemplate: 'Plantilla de respuesta /status (Opcional)',
-  discordStatusTemplateTip: 'Personaliza el formato de /status. Admite {{status_icon}}, {{status}}, {{load_icon}}, {{name}}, {{region}}, {{group}}, {{cpu}}, {{cpu_bar}}, {{cpu_icon}}, {{ram}}, {{ram_bar}}, {{ram_icon}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{disk_bar}}, {{net_in}}, {{net_out}}, {{uptime}}, {{last_seen}}, {{detail}}, o bucle {{#servers}}...{{/servers}} con {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
+  discordStatusTemplateTip: 'Personaliza el formato de /status. Admite {{id}}, {{status_icon}}, {{status}}, {{load_icon}}, {{name}}, {{region}}, {{region_tag}}, {{group}}, {{cpu}}, {{cpu_bar}}, {{cpu_icon}}, {{cpu_badge}}, {{ram}}, {{ram_bar}}, {{ram_icon}}, {{ram_badge}}, {{ram_used}}, {{ram_total}}, {{disk}}, {{disk_bar}}, {{disk_icon}}, {{disk_badge}}, {{net_in}}, {{net_out}}, {{net_in_short}}, {{net_out_short}}, {{uptime}}, {{uptime_short}}, {{last_seen}}, {{detail}}, o bucle {{#servers}}...{{/servers}} con {{total}}, {{online}}, {{offline}}, {{time}}, {{site_title}}.',
   discordStatusTemplatePlaceholder: 'Déjalo vacío para usar el formato predeterminado, p. ej. CPU: {{cpu}}% | RAM: {{ram}}% | ↓{{net_in}} ↑{{net_out}} | Up: {{uptime}}',
   ipChangeMaskIp: 'Ocultar IP completas en alertas de cambio de IP (p. ej. 216.*.*.171)',
   ipChangeMaskIpTip: 'Si está activo, oculta los segmentos intermedios en las notificaciones (IPv4 -> a.*.*.d, IPv6 -> a:*:*:h). Cloudflare DDNS sigue usando la IP real.',

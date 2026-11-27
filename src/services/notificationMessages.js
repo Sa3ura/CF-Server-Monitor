@@ -58,7 +58,9 @@ const NOTIFICATION_MESSAGES = {
       monthlyTotal: '月均支出',
       yearlyTotal: '年均支出',
       unlimitedTraffic: '不限流量',
-      loss: '丢包'
+      loss: '丢包',
+      unauthorized: '无权限执行此操作。',
+      featureDisabled: '站点设置已隐藏此信息。'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `本月已用 ${usedGb} GB / 限额 ${limitGb} GB（${percent}% ≥ ${threshold}%）`,
@@ -121,7 +123,9 @@ const NOTIFICATION_MESSAGES = {
       monthlyTotal: '月均支出',
       yearlyTotal: '年均支出',
       unlimitedTraffic: '不限流量',
-      loss: '丟包'
+      loss: '丟包',
+      unauthorized: '無權限執行此操作。',
+      featureDisabled: '站點設定已隱藏此資訊。'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `本月已用 ${usedGb} GB / 限額 ${limitGb} GB（${percent}% ≥ ${threshold}%）`,
@@ -184,7 +188,9 @@ const NOTIFICATION_MESSAGES = {
       monthlyTotal: 'Monthly est.',
       yearlyTotal: 'Yearly est.',
       unlimitedTraffic: 'Unlimited',
-      loss: 'Loss'
+      loss: 'Loss',
+      unauthorized: 'You are not authorized to use this command.',
+      featureDisabled: 'This information is hidden by site settings.'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Used ${usedGb} GB of ${limitGb} GB this month (${percent}% ≥ ${threshold}%)`,
@@ -247,7 +253,9 @@ const NOTIFICATION_MESSAGES = {
       monthlyTotal: '月額換算',
       yearlyTotal: '年額換算',
       unlimitedTraffic: '無制限',
-      loss: 'ロス'
+      loss: 'ロス',
+      unauthorized: 'このコマンドを実行する権限がありません。',
+      featureDisabled: 'サイト設定によりこの情報は非表示になっています。'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `今月 ${usedGb} GB / 上限 ${limitGb} GB 使用（${percent}% ≥ ${threshold}%）`,
@@ -310,7 +318,9 @@ const NOTIFICATION_MESSAGES = {
       monthlyTotal: 'Est. bulanan',
       yearlyTotal: 'Est. tahunan',
       unlimitedTraffic: 'Tak terbatas',
-      loss: 'Loss'
+      loss: 'Loss',
+      unauthorized: 'Anda tidak memiliki izin untuk menjalankan perintah ini.',
+      featureDisabled: 'Informasi ini disembunyikan oleh pengaturan situs.'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Terpakai ${usedGb} GB dari ${limitGb} GB bulan ini (${percent}% ≥ ${threshold}%)`,
@@ -373,7 +383,9 @@ const NOTIFICATION_MESSAGES = {
       monthlyTotal: 'Est. mensuel',
       yearlyTotal: 'Est. annuel',
       unlimitedTraffic: 'Illimité',
-      loss: 'Perte'
+      loss: 'Perte',
+      unauthorized: 'Vous n’êtes pas autorisé à exécuter cette commande.',
+      featureDisabled: 'Cette information est masquée par les paramètres du site.'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `${usedGb} Go sur ${limitGb} Go utilisés ce mois-ci (${percent}% ≥ ${threshold}%)`,
@@ -436,7 +448,9 @@ const NOTIFICATION_MESSAGES = {
       monthlyTotal: 'Est. mensual',
       yearlyTotal: 'Est. anual',
       unlimitedTraffic: 'Ilimitado',
-      loss: 'Pérdida'
+      loss: 'Pérdida',
+      unauthorized: 'No tienes permiso para ejecutar este comando.',
+      featureDisabled: 'Esta información está oculta por la configuración del sitio.'
     },
     trafficUsed: ({ usedGb, limitGb, percent, threshold }) =>
       `Usados ${usedGb} GB de ${limitGb} GB este mes (${percent}% ≥ ${threshold}%)`,
