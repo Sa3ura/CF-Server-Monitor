@@ -14,6 +14,7 @@
 
 import { saveMetricsHistory } from '../database/schema.js';
 import { evaluateTrafficAlert } from '../services/notification.js';
+import { evaluateIpChange } from '../services/ipMonitor.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
 import { getServerDetail, clearServerDetailCache } from '../utils/cache.js';
 import { getWssReportScheduleState, loadSiteSettings } from '../utils/settings.js';
@@ -1309,20 +1310,30 @@ export class MetricsBroadcaster {
         payload.timestamp,
         payload.agentVersion
       );
-      // 月流量阈值告警：写入成功后台非阻塞执行（waitUntil），不阻塞 WebSocket 消息循环
+      // 月流量阈值告警与节点 IP 变动检测：写入成功后台非阻塞执行（waitUntil），不阻塞 WebSocket 消息循环
       if (typeof this.state?.waitUntil === 'function') {
         this.state.waitUntil((async () => {
           try {
-            const trafficServerDetail = await this._getAgentServerDetail(serverId);
-            if (!trafficServerDetail) return;
-            await evaluateTrafficAlert(this.env, trafficServerDetail, metrics, {
-              patchCache: (id, value) => {
-                const entry = this.agentServerDetails.get(id);
-                if (entry && entry.data) entry.data.traffic_alert_state = value;
-              }
-            });
+            const agentServerDetail = await this._getAgentServerDetail(serverId);
+            if (!agentServerDetail) return;
+            await Promise.allSettled([
+              evaluateTrafficAlert(this.env, agentServerDetail, metrics, {
+                patchCache: (id, value) => {
+                  const entry = this.agentServerDetails.get(id);
+                  if (entry && entry.data) entry.data.traffic_alert_state = value;
+                }
+              }),
+              evaluateIpChange(this.env, agentServerDetail, metrics, {
+                clientIp: attachment.clientIp,
+                patchCache: (id, fields) => {
+                  const entry = this.agentServerDetails.get(id);
+                  if (entry && entry.data) Object.assign(entry.data, fields);
+                },
+                waitUntil: (promise) => this.state.waitUntil(promise)
+              })
+            ]);
           } catch (e) {
-            console.error('[traffic-alert] DO evaluate failed:', e);
+            console.error('[agent-post-persist] DO evaluate failed:', e);
           }
         })());
       }

@@ -40,3 +40,7 @@ Thumbs.db
 # Cloudflare Workers
 .wrangler/
 dist/
+
+# AI 助手与代码索引
+.codegraph/
+AGENTS.md

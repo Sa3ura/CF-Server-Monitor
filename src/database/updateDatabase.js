@@ -90,7 +90,14 @@ export async function addServerColumns(db) {
       traffic_alert_state: "TEXT",
       interface: "TEXT DEFAULT ''",
       history_partition_id: "INTEGER DEFAULT 0",
-      timestamp: "INTEGER DEFAULT 0"
+      timestamp: "INTEGER DEFAULT 0",
+      last_ipv4: "TEXT DEFAULT ''",
+      last_ipv6: "TEXT DEFAULT ''",
+      pending_ip: "TEXT DEFAULT ''",
+      pending_ip_count: "INTEGER DEFAULT 0",
+      ddns_enabled: "TEXT DEFAULT '0'",
+      ddns_domain: "TEXT DEFAULT ''",
+      ddns_record_type: "TEXT DEFAULT 'AUTO'"
     };
     
     let added = 0;

@@ -1,12 +1,14 @@
 import { saveMetricsHistory } from '../database/schema.js';
 import { getServerDetail, clearServerDetailCache, patchServerDetailCache } from '../utils/cache.js';
-import { evaluateTrafficAlert } from '../services/notification.js';
+import { evaluateTrafficAlert, hasNotificationTarget } from '../services/notification.js';
+import { evaluateIpChange } from '../services/ipMonitor.js';
 import {
   DISK_IO_FIELD_TO_COLUMN,
   DISK_IO_METRIC_FIELDS,
   mergeMetricsIntoServer,
   coerceNumericMetricFields,
-  applyRequestIpFallback
+  applyRequestIpFallback,
+  resolveClientIpFromRequest
 } from '../utils/metrics.js';
 import { createErrorResponse, createUnauthorizedResponse, createBadRequestResponse } from '../utils/errors.js';
 import { ensureServerOptimization } from '../database/indexOptimization.js';
@@ -386,10 +388,7 @@ async function getCachedFrontendSubscriberCount(env) {
 }
 
 function hasResourceAlertNotificationTarget(settings = {}) {
-  if (normalizeBooleanSetting(settings.notification_webhook_enabled) === 'true') {
-    return String(settings.notification_webhook_url || '').trim().length > 0;
-  }
-  return String(settings.tg_bot_token || '').trim().length > 0;
+  return hasNotificationTarget(settings);
 }
 
 async function getRealtimeBatchIntent(env) {
@@ -767,6 +766,12 @@ async function handleUpdateCore(request, env, ctx, discovery, authState = null) 
     ctx.waitUntil(evaluateTrafficAlert(env, serverDetail, historyMetrics, {
       patchCache: (serverId, value) => patchServerDetailCache(serverId, { traffic_alert_state: value })
     }));
+    // 节点 IP 变动检测与可选 DDNS 同步：防抖并写回状态后异步触发通知与 DNS 更新
+    await evaluateIpChange(env, serverDetail, historyMetrics, {
+      clientIp: resolveClientIpFromRequest(request),
+      patchCache: (serverId, fields) => patchServerDetailCache(serverId, fields),
+      waitUntil: (promise) => ctx.waitUntil(promise)
+    });
 
     const clientConfigSchema = normalizeAgentConfigSchemaVersion(request.headers.get(AGENT_CONFIG_SCHEMA_HEADER));
     if (!clientConfigSchema) {

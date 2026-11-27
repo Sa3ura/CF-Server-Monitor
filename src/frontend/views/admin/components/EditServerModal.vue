@@ -225,6 +225,36 @@
           <p v-if="pingNodeErrors[field]" class="text-red text-sm mt-1">{{ pingNodeErrors[field] }}</p>
         </div>
       </div>
+      <div class="form-row mobile-two-row">
+        <div class="form-group flex-1">
+          <div class="checkbox-item no-margin">
+            <input type="checkbox" v-model="editForm.ddns_enabled">
+            <label>
+              <b>{{ trans.ddnsEnabled || 'DDNS' }}</b>
+              <HelpTooltip :text="trans.ddnsTip" />
+            </label>
+          </div>
+        </div>
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.ddnsDomain || 'DDNS Domain' }}</label>
+          <input
+            type="text"
+            name="edit_ddns_domain"
+            autocomplete="off"
+            v-model.trim="editForm.ddns_domain"
+            class="form-input"
+            :placeholder="trans.ddnsDomainPlaceholder || 'node1.example.com'"
+          >
+        </div>
+        <div class="form-group flex-1">
+          <label class="form-label">{{ trans.ddnsRecordType || 'Record Type' }}</label>
+          <select v-model="editForm.ddns_record_type" class="form-select">
+            <option value="AUTO">AUTO (A + AAAA)</option>
+            <option value="A">A (IPv4)</option>
+            <option value="AAAA">AAAA (IPv6)</option>
+          </select>
+        </div>
+      </div>
       <div class="form-row">
         <div class="form-group flex-1">
           <div class="checkbox-item no-margin">
@@ -329,7 +359,7 @@ const normalizeTgNotifySetting = (value) => {
 
 const isOfflineNotifyEnabled = computed(() => normalizeTgNotifySetting(props.settings.tg_notify) !== '0')
 const hasNodeNotificationOptions = computed(() => (
-  !!props.settings.tg_bot_token &&
+  (!!props.settings.tg_bot_token || !!props.settings.notification_webhook_enabled || !!props.settings.discord_bot_enabled) &&
   isOfflineNotifyEnabled.value
 ))
 const isWssReportEnabled = computed(() => props.settings.wss_report_enabled === true)

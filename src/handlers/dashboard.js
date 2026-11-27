@@ -60,6 +60,13 @@ function withoutPrivateServerFields(server) {
   delete item.bandwidth;
   delete item.note;
   delete item.auto_update;
+  delete item.last_ipv4;
+  delete item.last_ipv6;
+  delete item.pending_ip;
+  delete item.pending_ip_count;
+  delete item.ddns_enabled;
+  delete item.ddns_domain;
+  delete item.ddns_record_type;
   return normalizePublicIpFields(item);
 }
 

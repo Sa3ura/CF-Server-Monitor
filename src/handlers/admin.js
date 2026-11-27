@@ -1,13 +1,15 @@
 import { buildAuthCookie, buildClearAuthCookie, buildUaCookie, buildClearUaCookie, checkAuth, simpleAuthResponse, validateCredentials, generateToken, hasAppPasswordAccess } from '../middleware/auth.js';
 import { getLatestMetricsForAllServers } from '../database/schema.js';
 import { getAllServers, clearServersListCache } from '../utils/cache.js';
-import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateAppPassword, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
+import { clearAppearanceSettingsCache, isValidThemeOptions, isWssReportConfigured, isWssReportEnabled, normalizeBooleanSetting, normalizeDefaultLanguage, normalizeDiscordBotToken, normalizeDiscordSnowflake, normalizeDisplayMode, normalizeExpireNotificationTime, normalizeExpireReminder, normalizeFrontendWsTimeoutMinutes, normalizeLongHistoryPoints, normalizeNotificationLanguage, normalizeNotificationTemplate, normalizeNotificationTimezone, normalizeNotificationWebhookBody, normalizeNotificationWebhookFormat, normalizeNotificationWebhookHeaders, normalizeNotificationWebhookMethod, normalizePreferredTheme, normalizeResourceAlertRules, normalizeTgNotify, normalizeWssReportHours, saveSiteOptions, saveAppearanceOptions, saveThemeOptions, validateAppPassword, validateUserAgent, SITE_FIELDS, APPEARANCE_FIELDS, IMPORTABLE_SITE_FIELDS, IMPORTABLE_APPEARANCE_FIELDS, loadSiteSettings, loadAppearanceOptions } from '../utils/settings.js';
 import { mergeMetricsIntoServer } from '../utils/metrics.js';
 import { normalizePctOrNull } from '../utils/traffic.js';
 import { verifyTurnstileToken, hashPassword } from '../utils/common.js';
 import { AppError, createSuccessResponse, createBadRequestResponse, createUnauthorizedResponse, createErrorResponse } from '../utils/errors.js';
 import { addServerColumns } from '../database/updateDatabase.js';
 import { clearResourceAlertState, isSmtpNotificationTarget, sendNotification } from '../services/notification.js';
+import { isDiscordBotEnabled, validateDiscordBotTarget } from '../services/discord.js';
+import { isValidDdnsDomain, normalizeDdnsDomain, normalizeDdnsRecordType } from '../services/ipMonitor.js';
 import { getNotificationMessages } from '../services/notificationMessages.js';
 import { HISTORY_PARTITION_PICK_SQL, insertServerWithPartition } from '../database/indexOptimization.js';
 import { isValidTrafficCorrection, normalizeConnectionMode, normalizePingMode, normalizeWssReportInterval, validateAgentConfigInput, validatePingNode, validateNetworkInterfaces } from '../utils/agentConfig.js';
@@ -32,8 +34,8 @@ const IMPORT_SERVER_SQL = `
     currency, expire_date,
     traffic_limit, traffic_calc_type, "interface", reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode,
     auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction,
-    offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp, traffic_alert_percent)
-  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, pid, ?, ?
+    offline_notify_disabled, is_hidden, sort_order, history_partition_id, timestamp, traffic_alert_percent, ddns_enabled, ddns_domain, ddns_record_type)
+  SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, pid, ?, ?, ?, ?, ?
   FROM next
   WHERE pid IS NOT NULL
 `;
@@ -712,6 +714,10 @@ async function handleSendTestNotificationAction({ data }) {
   const {
     tg_bot_token,
     tg_chat_id,
+    discord_bot_enabled,
+    discord_bot_token,
+    discord_channel_id,
+    discord_user_id,
     notification_webhook_enabled,
     notification_webhook_url,
     notification_webhook_method,
@@ -723,8 +729,18 @@ async function handleSendTestNotificationAction({ data }) {
     notification_language,
     expire_notification_time
   } = data;
+  const discordBotEnabled = isDiscordBotEnabled({ discord_bot_enabled });
   const webhookEnabled = normalizeBooleanSetting(notification_webhook_enabled) === 'true';
-  if (webhookEnabled) {
+  if (discordBotEnabled) {
+    const discordValidation = validateDiscordBotTarget({
+      discord_bot_token,
+      discord_channel_id,
+      discord_user_id
+    });
+    if (!discordValidation.valid) {
+      return createBadRequestResponse(discordValidation.error);
+    }
+  } else if (webhookEnabled) {
     if (!notification_webhook_url || String(notification_webhook_url).trim().length === 0) {
       return createBadRequestResponse('notificationWebhookUrlRequired');
     }
@@ -739,6 +755,10 @@ async function handleSendTestNotificationAction({ data }) {
     const result = await sendNotification({
       tg_bot_token,
       tg_chat_id: tg_chat_id || '',
+      discord_bot_enabled: discordBotEnabled ? 'true' : 'false',
+      discord_bot_token: normalizeDiscordBotToken(discord_bot_token),
+      discord_channel_id: normalizeDiscordSnowflake(discord_channel_id),
+      discord_user_id: normalizeDiscordSnowflake(discord_user_id),
       notification_webhook_enabled: normalizeBooleanSetting(notification_webhook_enabled),
       notification_webhook_url: notification_webhook_url || '',
       notification_webhook_method: normalizeNotificationWebhookMethod(notification_webhook_method),
@@ -912,6 +932,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         : currentResourceAlertRules;
       const resourceAlertEnabled = normalizedResourceAlertRules.length > 0;
       if (tgNotify !== '0' || expireReminder !== '0' || resourceAlertEnabled) {
+        const discordBotEnabled = settings.discord_bot_enabled !== undefined
+          ? isDiscordBotEnabled({ discord_bot_enabled: settings.discord_bot_enabled })
+          : isDiscordBotEnabled(sys);
         const webhookEnabled = settings.notification_webhook_enabled !== undefined
           ? normalizeBooleanSetting(settings.notification_webhook_enabled) === 'true'
           : normalizeBooleanSetting(sys?.notification_webhook_enabled) === 'true';
@@ -921,7 +944,16 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
         const effectiveTgBotToken = settings.tg_bot_token !== undefined
           ? settings.tg_bot_token
           : sys?.tg_bot_token;
-        if (webhookEnabled) {
+        if (discordBotEnabled) {
+          const discordValidation = validateDiscordBotTarget({
+            discord_bot_token: settings.discord_bot_token !== undefined ? settings.discord_bot_token : sys?.discord_bot_token,
+            discord_channel_id: settings.discord_channel_id !== undefined ? settings.discord_channel_id : sys?.discord_channel_id,
+            discord_user_id: settings.discord_user_id !== undefined ? settings.discord_user_id : sys?.discord_user_id
+          });
+          if (!discordValidation.valid) {
+            return createBadRequestResponse(discordValidation.error);
+          }
+        } else if (webhookEnabled) {
           if (!effectiveWebhookUrl || String(effectiveWebhookUrl).trim().length === 0) {
             return createBadRequestResponse('notificationWebhookUrlRequired');
           }
@@ -1009,6 +1041,12 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             siteOptions[field] = pingNodes.values[field];
           } else if (field === 'tg_notify') {
             siteOptions[field] = tgNotify;
+          } else if (field === 'discord_bot_enabled') {
+            siteOptions[field] = normalizeBooleanSetting(settings[field]);
+          } else if (field === 'discord_bot_token') {
+            siteOptions[field] = normalizeDiscordBotToken(settings[field]);
+          } else if (field === 'discord_channel_id' || field === 'discord_user_id') {
+            siteOptions[field] = normalizeDiscordSnowflake(settings[field]);
           } else if (field === 'expire_reminder') {
             siteOptions[field] = expireReminder;
           } else if (field === 'long_history_points') {
@@ -1154,9 +1192,18 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       });
     }
     else if (data.action === 'edit') {
-      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, traffic_alert_percent, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction, offline_notify_disabled, is_hidden } = data;
+      const { id, name, server_group, region, tags, note, price, billing_cycle, auto_renewal, currency, expire_date, traffic_limit, traffic_calc_type, traffic_alert_percent, interface: networkInterfaceInput, reset_day, collect_interval, report_interval, wss_report_interval, connection_mode, ping_mode, auto_update, custom_ct, custom_cu, custom_cm, custom_bd, node_1, node_2, node_3, node_4, rx_correction, tx_correction, offline_notify_disabled, is_hidden, ddns_enabled, ddns_domain, ddns_record_type } = data;
       if (!id || !isValidUUID(id)) {
         return createBadRequestResponse('invalidServerId');
+      }
+      const normalizedDdnsEnabled = normalizeBooleanFlag(ddns_enabled);
+      const normalizedDdnsDomain = normalizeDdnsDomain(ddns_domain);
+      const normalizedDdnsRecordType = normalizeDdnsRecordType(ddns_record_type);
+      if (normalizedDdnsEnabled === '1' && !normalizedDdnsDomain) {
+        return createBadRequestResponse('ddnsDomainRequired');
+      }
+      if (normalizedDdnsDomain && !isValidDdnsDomain(normalizedDdnsDomain)) {
+        return createBadRequestResponse('invalidDdnsDomain');
       }
       const effectiveConnectionMode = isWssReportConfigured(sys) ? connection_mode : 'http';
       const agentConfigResult = validateAgentConfigInput({
@@ -1209,7 +1256,7 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
       try {
         await env.DB.prepare(`
           UPDATE servers
-          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, node_1 = ?, node_2 = ?, node_3 = ?, node_4 = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?, traffic_alert_percent = ?
+          SET name = ?, server_group = ?, region = ?, tags = ?, note = ?, price = ?, billing_cycle = ?, auto_renewal = ?, currency = ?, expire_date = ?, traffic_limit = ?, traffic_calc_type = ?, "interface" = ?, reset_day = ?, collect_interval = ?, report_interval = ?, wss_report_interval = ?, connection_mode = ?, ping_mode = ?, auto_update = ?, custom_ct = ?, custom_cu = ?, custom_cm = ?, custom_bd = ?, node_1 = ?, node_2 = ?, node_3 = ?, node_4 = ?, rx_correction = ?, tx_correction = ?, offline_notify_disabled = ?, is_hidden = ?, traffic_alert_percent = ?, ddns_enabled = ?, ddns_domain = ?, ddns_record_type = ?
           WHERE id = ?
         `).bind(
           name || '',
@@ -1245,6 +1292,9 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
           normalizeBooleanFlag(offline_notify_disabled),
           normalizeBooleanFlag(is_hidden),
           normalizePctOrNull(traffic_alert_percent),
+          normalizedDdnsEnabled,
+          normalizedDdnsDomain,
+          normalizedDdnsRecordType,
           id
         ).run();
       } catch (e) {
@@ -1395,7 +1445,10 @@ export async function handleAdminAPI(request, env, sys, loadFullSettings = null,
             normalizeBooleanFlag(server.is_hidden),
             server.sort_order ?? 0,
             server.timestamp || Date.now(),
-            normalizePctOrNull(server.traffic_alert_percent)
+            normalizePctOrNull(server.traffic_alert_percent),
+            normalizeBooleanFlag(server.ddns_enabled),
+            isValidDdnsDomain(server.ddns_domain) ? normalizeDdnsDomain(server.ddns_domain) : '',
+            normalizeDdnsRecordType(server.ddns_record_type)
           ).run();
           // 分区号被并发占用或 900 个已用满时 SELECT 不返回行，按跳过处理。
           // 只在明确的 0 行写入时跳过，缺少 meta 不能当成失败。

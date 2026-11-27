@@ -297,6 +297,7 @@
             <select v-model="notificationChannel" class="form-select">
               <option value="builtin">{{ trans.builtinNotification || 'Built-in' }}</option>
               <option value="smtp">{{ trans.smtpNotification || 'SMTP Email' }}</option>
+              <option value="discord_bot">{{ trans.discordBot || 'Discord Bot' }}</option>
               <option value="webhook">{{ trans.customWebhook || 'Custom Webhook' }}</option>
             </select>
           </div>
@@ -389,6 +390,71 @@
               <label class="form-label">{{ trans.smtpTo || 'Recipients' }}</label>
               <input type="text" name="smtp_to" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" v-model.trim="smtpConfig.to" @blur="validateSmtpField('to')" class="form-input" placeholder="a@example.com,b@example.com">
               <p v-if="smtpErrors.to" class="text-danger text-sm">{{ smtpErrors.to }}</p>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="notificationChannel === 'discord_bot'" class="resource-alert-rule">
+          <div class="resource-alert-rule-title">
+            <span>{{ trans.discordBot || 'Discord Bot' }}</span>
+            <HelpTooltip :text="trans.discordBotTip" />
+          </div>
+
+          <div class="form-row">
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.discordBotToken }}</label>
+              <div class="password-input-wrapper">
+                <input
+                  type="text"
+                  name="discord_bot_token"
+                  autocomplete="off"
+                  data-lpignore="true"
+                  data-1p-ignore="true"
+                  data-bwignore="true"
+                  data-form-type="other"
+                  v-model.trim="settings.discord_bot_token"
+                  :class="['form-input', { 'secret-input-masked': !passwordVisible.discordBotToken }]"
+                  placeholder="Bot Token"
+                >
+                <button type="button" class="password-toggle" @click="$emit('toggle-password', 'discordBotToken')">
+                  {{ passwordVisible.discordBotToken ? '🙈' : '👁️' }}
+                </button>
+              </div>
+            </div>
+
+            <div class="form-group flex-1">
+              <label class="form-label">{{ trans.discordChannelId }}</label>
+              <input
+                type="text"
+                name="discord_channel_id"
+                autocomplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-bwignore="true"
+                data-form-type="other"
+                v-model.trim="settings.discord_channel_id"
+                class="form-input"
+                placeholder="123456789012345678"
+              >
+            </div>
+
+            <div class="form-group flex-1">
+              <label class="form-label">
+                {{ trans.discordUserId }}
+                <HelpTooltip :text="trans.discordUserIdTip" />
+              </label>
+              <input
+                type="text"
+                name="discord_user_id"
+                autocomplete="off"
+                data-lpignore="true"
+                data-1p-ignore="true"
+                data-bwignore="true"
+                data-form-type="other"
+                v-model.trim="settings.discord_user_id"
+                class="form-input"
+                placeholder="Optional User ID (DM)"
+              >
             </div>
           </div>
         </div>
@@ -1276,11 +1342,19 @@ const validateSmtpFields = () => {
 
 const notificationChannel = computed({
   get: () => {
+    if (props.settings.discord_bot_enabled) return 'discord_bot'
     if (props.settings.notification_webhook_enabled) return 'webhook'
     if (smtpChannelActive.value || isSmtpToken(props.settings.tg_bot_token)) return 'smtp'
     return 'builtin'
   },
   set: (value) => {
+    if (value === 'discord_bot') {
+      smtpChannelActive.value = false
+      props.settings.notification_webhook_enabled = false
+      props.settings.discord_bot_enabled = true
+      return
+    }
+    props.settings.discord_bot_enabled = false
     if (value === 'webhook') {
       smtpChannelActive.value = false
       props.settings.notification_webhook_enabled = true

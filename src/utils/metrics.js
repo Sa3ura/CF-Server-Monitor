@@ -37,7 +37,7 @@ function isPlainMetricObject(value) {
 
 // 探针公网 IP 探测失败时会回填 "0"（见 install.sh 的 IPV4/IPV6 兜底），
 // 与空字符串一样视为"未获取到"，此时才允许用请求头来源 IP 补位。
-function isBlankIpField(value) {
+export function isBlankIpField(value) {
   const text = String(value ?? '').trim();
   if (!text) return true;
   const normalized = text.toLowerCase();
@@ -63,7 +63,7 @@ function isValidIpv4Address(value) {
 
 // 统一按地址族归类：IPv4-mapped IPv6（::ffff:1.2.3.4）归到 v4，
 // 否则 v4 客户端会被误写进 ip_v6。
-function normalizeClientIp(value) {
+export function normalizeClientIp(value) {
   const ip = sanitizeClientIp(value);
   if (!ip) return null;
 

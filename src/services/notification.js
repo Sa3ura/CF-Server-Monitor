@@ -34,6 +34,7 @@ import {
   RESOURCE_ALERT_NOTIFICATION_SOFT_LIMIT
 } from '../utils/config.js';
 import { getNotificationMessages } from './notificationMessages.js';
+import { hasDiscordBotTarget, isDiscordBotEnabled, sendDiscordBotNotification } from './discord.js';
 
 const RESOURCE_ALERT_STATE_ACTIVE = 'active';
 const RESOURCE_ALERT_STATE_RECOVERED = 'recovered';
@@ -542,7 +543,8 @@ function buildNotificationContext(settings, msg, context = {}) {
     clients: clients.join(', '),
     count: String(count),
     message: context.message || String(msg || ''),
-    time: context.time || now
+    time: context.time || now,
+    embedFields: Array.isArray(context.embedFields) ? context.embedFields : undefined
   };
 }
 
@@ -657,7 +659,11 @@ export function isSmtpNotificationTarget(token) {
   return String(token || '').trim().toLowerCase().indexOf('smtp:') === 0;
 }
 
-function hasNotificationTarget(settings) {
+export function hasNotificationTarget(settings) {
+  if (isDiscordBotEnabled(settings)) {
+    return hasDiscordBotTarget(settings);
+  }
+
   if (normalizeBooleanSetting(settings?.notification_webhook_enabled) === 'true') {
     return String(settings?.notification_webhook_url || '').trim().length > 0;
   }
@@ -868,6 +874,10 @@ export async function sendNotification(settings, msg, notificationContext = {}) 
   const formattedMsg = formatNotificationMessage(settings || {}, msg, context);
   context.notification = formattedMsg;
   const title = context.title;
+
+  if (isDiscordBotEnabled(settings)) {
+    return await sendDiscordBotNotification(settings, context, formattedMsg);
+  }
 
   if (normalizeBooleanSetting(settings?.notification_webhook_enabled) === 'true') {
     if (!String(settings?.notification_webhook_url || '').trim()) return "自定义 Webhook 通知失败: 缺少 URL";

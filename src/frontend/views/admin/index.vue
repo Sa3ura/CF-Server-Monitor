@@ -1003,6 +1003,10 @@ const settings = ref({
   traffic_alert_threshold: 0,
   tg_bot_token: '',
   tg_chat_id: '',
+  discord_bot_enabled: false,
+  discord_bot_token: '',
+  discord_channel_id: '',
+  discord_user_id: '',
   notification_timezone: 'UTC',
   notification_language: 'zh',
   expire_notification_time: '12',
@@ -1062,7 +1066,7 @@ const toggleAdminPasswordChange = () => {
 }
 
 const { visibility: passwordVisible, toggle: togglePassword } = usePasswordVisibility([
-  'login', 'tgBotToken', 'tgChatId', 'notificationWebhookUrl', 'smtpPassword', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'ua', 'appPassword', 'password', 'confirmPassword'
+  'login', 'tgBotToken', 'tgChatId', 'discordBotToken', 'notificationWebhookUrl', 'smtpPassword', 'turnstileSecret', 'cloudflareToken', 'jwtSecret', 'ua', 'appPassword', 'password', 'confirmPassword'
 ])
 
 const {
@@ -1137,7 +1141,10 @@ const editForm = ref({
   tx_correction: '',
   auto_update: false,
   is_hidden: false,
-  offline_notify_disabled: false
+  offline_notify_disabled: false,
+  ddns_enabled: false,
+  ddns_domain: '',
+  ddns_record_type: 'AUTO'
 })
 
 const createBatchEditDefaults = () => ({
@@ -1168,7 +1175,10 @@ const createBatchEditDefaults = () => ({
   tx_correction: '',
   auto_update: false,
   is_hidden: false,
-  offline_notify_disabled: false
+  offline_notify_disabled: false,
+  ddns_enabled: false,
+  ddns_domain: '',
+  ddns_record_type: 'AUTO'
 })
 
 const batchEditForm = ref(createBatchEditDefaults())
@@ -1551,6 +1561,10 @@ const loadSettings = async () => {
         traffic_alert_threshold: Number(settingsData.traffic_alert_threshold) || 0,
         tg_bot_token: settingsData.tg_bot_token || '',
         tg_chat_id: settingsData.tg_chat_id || '',
+        discord_bot_enabled: settingsData.discord_bot_enabled === 'true' || settingsData.discord_bot_enabled === true,
+        discord_bot_token: settingsData.discord_bot_token || '',
+        discord_channel_id: settingsData.discord_channel_id || '',
+        discord_user_id: settingsData.discord_user_id || '',
         notification_timezone: normalizeNotificationTimezoneSetting(settingsData.notification_timezone),
         notification_language: normalizeNotificationLanguageSetting(settingsData.notification_language),
         expire_notification_time: normalizeExpireNotificationTimeSetting(settingsData.expire_notification_time),
@@ -1684,8 +1698,29 @@ const saveSettings = async () => {
     }
   }
 
+  const discordIdPattern = /^\d{15,25}$/
+  if (settings.value.discord_bot_enabled) {
+    const token = String(settings.value.discord_bot_token || '').trim()
+    const channelId = String(settings.value.discord_channel_id || '').trim()
+    const userId = String(settings.value.discord_user_id || '').trim()
+    if (!token) {
+      validationError.value = trans.value.discordBotTokenRequired
+      return
+    }
+    if (!channelId && !userId) {
+      validationError.value = trans.value.discordTargetRequired
+      return
+    }
+    if ((channelId && !discordIdPattern.test(channelId)) || (userId && !discordIdPattern.test(userId))) {
+      validationError.value = trans.value.invalidDiscordId
+      return
+    }
+  }
+
   if (isTgNotifyEnabled(settings.value.tg_notify) || isExpireReminderEnabled(settings.value.expire_reminder) || isResourceAlertEnabled(settings.value.resource_alert_rules)) {
-    if (isNotificationWebhookEnabled()) {
+    if (settings.value.discord_bot_enabled) {
+      // Discord Bot 已在上方校验
+    } else if (isNotificationWebhookEnabled()) {
       if (!settings.value.notification_webhook_url || settings.value.notification_webhook_url.trim().length === 0) {
         validationError.value = trans.value.notificationWebhookUrlRequired || 'Webhook URL is required'
         return
@@ -1754,6 +1789,10 @@ const saveSettings = async () => {
       traffic_alert_threshold: String(Math.max(0, Math.min(100, Number(settings.value.traffic_alert_threshold) || 0))),
       tg_bot_token: settings.value.tg_bot_token,
       tg_chat_id: settings.value.tg_chat_id,
+      discord_bot_enabled: settings.value.discord_bot_enabled ? 'true' : 'false',
+      discord_bot_token: String(settings.value.discord_bot_token || '').trim(),
+      discord_channel_id: String(settings.value.discord_channel_id || '').trim(),
+      discord_user_id: String(settings.value.discord_user_id || '').trim(),
       notification_timezone: normalizeNotificationTimezoneSetting(settings.value.notification_timezone),
       notification_language: normalizeNotificationLanguageSetting(settings.value.notification_language),
       expire_notification_time: normalizeExpireNotificationTimeSetting(settings.value.expire_notification_time),
@@ -2090,7 +2129,12 @@ const createEditFormFromServer = (server) => ({
     tx_correction: server.tx_correction ?? '',
     auto_update: server.auto_update === '1' || server.auto_update === 1 || server.auto_update === true,
     is_hidden: server.is_hidden === '1',
-    offline_notify_disabled: server.offline_notify_disabled === '1'
+    offline_notify_disabled: server.offline_notify_disabled === '1',
+    ddns_enabled: server.ddns_enabled === '1' || server.ddns_enabled === 1 || server.ddns_enabled === true,
+    ddns_domain: server.ddns_domain || '',
+    ddns_record_type: ['A', 'AAAA', 'AUTO'].includes(String(server.ddns_record_type || '').toUpperCase())
+      ? String(server.ddns_record_type).toUpperCase()
+      : 'AUTO'
 })
 
 const openEditModal = (server) => {
@@ -2176,7 +2220,12 @@ const buildEditPayloadFromForm = (form) => {
       tx_correction: form.tx_correction,
       auto_update: form.auto_update ? '1' : '0',
       is_hidden: form.is_hidden ? '1' : '0',
-      offline_notify_disabled: form.offline_notify_disabled ? '1' : '0'
+      offline_notify_disabled: form.offline_notify_disabled ? '1' : '0',
+      ddns_enabled: form.ddns_enabled ? '1' : '0',
+      ddns_domain: String(form.ddns_domain || '').trim().toLowerCase(),
+      ddns_record_type: ['A', 'AAAA', 'AUTO'].includes(String(form.ddns_record_type || '').toUpperCase())
+        ? String(form.ddns_record_type).toUpperCase()
+        : 'AUTO'
     },
     normalized: {
       price: normalizedPrice,
@@ -2189,6 +2238,17 @@ const buildEditPayloadFromForm = (form) => {
 
 const saveEdit = async () => {
   validationError.value = null
+
+  const ddnsDomain = String(editForm.value.ddns_domain || '').trim().toLowerCase().replace(/\.+$/, '')
+  const ddnsDomainPattern = /^(?=.{1,253}$)(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,63}$/
+  if (editForm.value.ddns_enabled && !ddnsDomain) {
+    validationError.value = trans.value.ddnsDomainRequired
+    return
+  }
+  if (ddnsDomain && !ddnsDomainPattern.test(ddnsDomain)) {
+    validationError.value = trans.value.invalidDdnsDomain
+    return
+  }
 
   const pingNodeValidation = getPingNodeValidation(editForm.value)
   if (!pingNodeValidation.valid) {
@@ -2243,7 +2303,12 @@ const saveEdit = async () => {
     tx_correction: editForm.value.tx_correction,
     auto_update: editForm.value.auto_update ? '1' : '0',
     is_hidden: editForm.value.is_hidden ? '1' : '0',
-    offline_notify_disabled: editForm.value.offline_notify_disabled ? '1' : '0'
+    offline_notify_disabled: editForm.value.offline_notify_disabled ? '1' : '0',
+    ddns_enabled: editForm.value.ddns_enabled ? '1' : '0',
+    ddns_domain: ddnsDomain,
+    ddns_record_type: ['A', 'AAAA', 'AUTO'].includes(String(editForm.value.ddns_record_type || '').toUpperCase())
+      ? String(editForm.value.ddns_record_type).toUpperCase()
+      : 'AUTO'
   }
 
   try {
@@ -2565,6 +2630,10 @@ const sendTestNotification = async () => {
       action: 'send_test_notification',
       tg_bot_token: settings.value.tg_bot_token,
       tg_chat_id: settings.value.tg_chat_id,
+      discord_bot_enabled: settings.value.discord_bot_enabled ? 'true' : 'false',
+      discord_bot_token: String(settings.value.discord_bot_token || '').trim(),
+      discord_channel_id: String(settings.value.discord_channel_id || '').trim(),
+      discord_user_id: String(settings.value.discord_user_id || '').trim(),
       notification_webhook_enabled: settings.value.notification_webhook_enabled ? 'true' : 'false',
       notification_webhook_url: settings.value.notification_webhook_url,
       notification_webhook_method: settings.value.notification_webhook_method,

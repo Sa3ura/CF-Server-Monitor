@@ -109,7 +109,14 @@ export async function initDatabase(db) {
           is_hidden TEXT DEFAULT '0',
           sort_order INTEGER DEFAULT 0,
           history_partition_id INTEGER DEFAULT 0,
-          timestamp INTEGER DEFAULT 0
+          timestamp INTEGER DEFAULT 0,
+          last_ipv4 TEXT DEFAULT '',
+          last_ipv6 TEXT DEFAULT '',
+          pending_ip TEXT DEFAULT '',
+          pending_ip_count INTEGER DEFAULT 0,
+          ddns_enabled TEXT DEFAULT '0',
+          ddns_domain TEXT DEFAULT '',
+          ddns_record_type TEXT DEFAULT 'AUTO'
         )
       `).run();
     } else {

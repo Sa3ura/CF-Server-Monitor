@@ -1,0 +1,297 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+
+import {
+  evaluateIpChange,
+  extractReportedIps,
+  isValidDdnsDomain,
+  parsePendingIpState,
+  serializePendingIpState,
+  syncCloudflareDnsRecord
+} from '../src/services/ipMonitor.js';
+import { handleAdminAPI } from '../src/handlers/admin.js';
+import { handleServerAPI } from '../src/handlers/dashboard.js';
+import { generateToken } from '../src/middleware/auth.js';
+import { clearAllCaches } from '../src/utils/cache.js';
+import { clearSiteSettingsCache } from '../src/utils/settings.js';
+
+function makeIpMonitorDb(server, settings = {}) {
+  const updates = [];
+  return {
+    updates,
+    prepare(sql) {
+      return {
+        args: [],
+        bind(...args) { this.args = args; return this; },
+        async first() {
+          if (sql.includes("key = 'site_options'")) {
+            return { value: JSON.stringify(settings) };
+          }
+          if (sql.includes('FROM servers WHERE id = ?')) {
+            return server;
+          }
+          return null;
+        },
+        async all() {
+          return { results: server ? [server] : [] };
+        },
+        async run() {
+          if (sql.startsWith('UPDATE servers SET last_ipv4')) {
+            const [last_ipv4, last_ipv6, pending_ip, pending_ip_count, id] = this.args;
+            updates.push({ last_ipv4, last_ipv6, pending_ip, pending_ip_count, id });
+          }
+          return { success: true, meta: { changes: 1 } };
+        }
+      };
+    }
+  };
+}
+
+test('extractReportedIps prefers reported IPs and falls back to CF-Connecting-IP per address family', () => {
+  assert.deepEqual(
+    extractReportedIps({ ip_v4: '1.2.3.4', ip_v6: '0' }, '2001:db8::10'),
+    { v4: '1.2.3.4', v6: '2001:db8::10' }
+  );
+  assert.deepEqual(
+    extractReportedIps({ ip_v4: '0', ip_v6: '0' }, '::ffff:198.51.100.42'),
+    { v4: '198.51.100.42', v6: '' }
+  );
+  assert.deepEqual(
+    extractReportedIps({ ip_v4: '1.2.3.4', ip_v6: '2001:db8::1' }, '9.9.9.9'),
+    { v4: '1.2.3.4', v6: '2001:db8::1' }
+  );
+});
+
+test('pending IP state round-trips single-stack and dual-stack entries', () => {
+  const single = serializePendingIpState({ v4: { ip: '2.2.2.2', count: 1 }, v6: null });
+  assert.deepEqual(single, { pending_ip: '2.2.2.2', pending_ip_count: 1 });
+  assert.deepEqual(parsePendingIpState(single.pending_ip, single.pending_ip_count), {
+    v4: { ip: '2.2.2.2', count: 1 },
+    v6: null
+  });
+
+  const dual = serializePendingIpState({
+    v4: { ip: '2.2.2.2', count: 1 },
+    v6: { ip: '2001:db8::2', count: 1 }
+  });
+  assert.equal(dual.pending_ip_count, 1);
+  assert.deepEqual(parsePendingIpState(dual.pending_ip, dual.pending_ip_count), {
+    v4: { ip: '2.2.2.2', count: 1 },
+    v6: { ip: '2001:db8::2', count: 1 }
+  });
+});
+
+test('evaluateIpChange establishes baseline silently and requires 2 consecutive heartbeats before alerting + syncing DDNS', async () => {
+  clearSiteSettingsCache();
+  const server = {
+    id: 'srv-ddns-1',
+    name: 'Home-NAS',
+    last_ipv4: '',
+    last_ipv6: '',
+    pending_ip: '',
+    pending_ip_count: 0,
+    ddns_enabled: '1',
+    ddns_domain: 'nas.example.com',
+    ddns_record_type: 'AUTO'
+  };
+  const settings = {
+    jwt_secret: 'x'.repeat(32),
+    tg_bot_token: '123:tg',
+    tg_chat_id: '999',
+    notification_language: 'zh'
+  };
+  const db = makeIpMonitorDb(server, settings);
+  const env = {
+    DB: db,
+    CF_DNS_API_TOKEN: 'cf-dns-token',
+    CF_ZONE_ID: 'zone-123'
+  };
+
+  const fetchCalls = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    fetchCalls.push({ url: u, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null });
+    if (u.includes('/dns_records?')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            success: true,
+            result: [{ id: 'rec-v4-1', type: 'A', name: 'nas.example.com', content: '1.1.1.1', ttl: 120, proxied: false }]
+          };
+        }
+      };
+    }
+    if (u.includes('/dns_records/rec-v4-1')) {
+      return {
+        ok: true,
+        status: 200,
+        async json() { return { success: true, result: { id: 'rec-v4-1' } }; }
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      async json() { return { ok: true }; },
+      async text() { return ''; }
+    };
+  };
+
+  const pendingTasks = [];
+  const waitUntil = (p) => pendingTasks.push(p);
+
+  try {
+    // 1. Initial baseline heartbeat -> writes last_ipv4 without alerting
+    const r1 = await evaluateIpChange(env, server, { ip_v4: '1.1.1.1', ip_v6: '2001:db8::1' }, { waitUntil });
+    assert.equal(r1.changed, false);
+    assert.equal(server.last_ipv4, '1.1.1.1');
+    assert.equal(server.last_ipv6, '2001:db8::1');
+    assert.equal(fetchCalls.length, 0);
+
+    // 2. First heartbeat with new IPv4 (2.2.2.2) -> pending only, no alert
+    const r2 = await evaluateIpChange(env, server, { ip_v4: '2.2.2.2', ip_v6: '2001:db8::1' }, { waitUntil });
+    assert.equal(r2.changed, false);
+    assert.equal(server.pending_ip, '2.2.2.2');
+    assert.equal(server.pending_ip_count, 1);
+    assert.equal(server.last_ipv4, '1.1.1.1');
+    assert.equal(fetchCalls.length, 0);
+
+    // 3. Transient flap back to 1.1.1.1 -> clears pending, no alert
+    const r3 = await evaluateIpChange(env, server, { ip_v4: '1.1.1.1', ip_v6: '2001:db8::1' }, { waitUntil });
+    assert.equal(r3.changed, false);
+    assert.equal(server.pending_ip, '');
+    assert.equal(server.pending_ip_count, 0);
+
+    // 4. New IPv4 (3.3.3.3) appears once -> pending
+    const r4 = await evaluateIpChange(env, server, { ip_v4: '3.3.3.3', ip_v6: '2001:db8::1' }, { waitUntil });
+    assert.equal(r4.changed, false);
+    assert.equal(server.pending_ip, '3.3.3.3');
+    assert.equal(server.pending_ip_count, 1);
+
+    // 5. IPv6-only heartbeat (no v4 reported) must NOT clear pending_ip for v4 or falsely trigger v4
+    const r5 = await evaluateIpChange(env, server, { ip_v4: '0', ip_v6: '2001:db8::1' }, { waitUntil });
+    assert.equal(r5.changed, false);
+    assert.equal(server.pending_ip, '3.3.3.3');
+
+    // 6. Second heartbeat with 3.3.3.3 -> confirmed change!
+    const r6 = await evaluateIpChange(env, server, { ip_v4: '3.3.3.3', ip_v6: '2001:db8::1' }, { waitUntil });
+    assert.equal(r6.changed, true);
+    assert.equal(r6.changes.length, 1);
+    assert.equal(r6.changes[0].oldIp, '1.1.1.1');
+    assert.equal(r6.changes[0].newIp, '3.3.3.3');
+    assert.equal(server.last_ipv4, '3.3.3.3');
+    assert.equal(server.pending_ip, '');
+    assert.equal(server.pending_ip_count, 0);
+
+    await Promise.all(pendingTasks);
+
+    // Verify CF DNS GET + PATCH and Telegram notification
+    assert.equal(fetchCalls.length, 3);
+    assert.equal(fetchCalls[0].method, 'GET');
+    assert.match(fetchCalls[0].url, /zones\/zone-123\/dns_records\?type=A&name=nas\.example\.com/);
+    assert.equal(fetchCalls[1].method, 'PATCH');
+    assert.equal(fetchCalls[1].url, 'https://api.cloudflare.com/client/v4/zones/zone-123/dns_records/rec-v4-1');
+    assert.deepEqual(fetchCalls[1].body, {
+      type: 'A',
+      name: 'nas.example.com',
+      content: '3.3.3.3',
+      ttl: 120,
+      proxied: false
+    });
+    assert.match(fetchCalls[2].url, /api\.telegram\.org\/bot123:tg\/sendMessage/);
+    assert.match(fetchCalls[2].body.text, /节点 IP 变更告警/);
+    assert.match(fetchCalls[2].body.text, /1\.1\.1\.1 -> 3\.3\.3\.3/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('syncCloudflareDnsRecord handles missing env and DNS API failures safely', async () => {
+  const missingEnv = await syncCloudflareDnsRecord({}, { domain: 'a.example.com', recordType: 'A', newIp: '1.2.3.4' });
+  assert.equal(missingEnv.attempted, false);
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: false,
+    status: 403,
+    async json() { return { success: false, errors: [{ message: 'Invalid token' }] }; }
+  });
+  try {
+    const failed = await syncCloudflareDnsRecord(
+      { CF_DNS_API_TOKEN: 'bad', CF_ZONE_ID: 'z1' },
+      { domain: 'a.example.com', recordType: 'A', newIp: '1.2.3.4' }
+    );
+    assert.equal(failed.attempted, true);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.error, 'Invalid token');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('admin edit validates DDNS domain and dashboard strips IP tracking / DDNS fields from public API', async () => {
+  clearAllCaches();
+  const sys = { password: 'hash', jwt_secret: 'x'.repeat(32), is_public: 'true' };
+  const serverRow = {
+    id: '550e8400-e29b-41d4-a716-446655440000',
+    name: 'Node-A',
+    history_partition_id: 1,
+    is_hidden: '0',
+    last_ipv4: '1.2.3.4',
+    last_ipv6: '2001:db8::1',
+    pending_ip: '5.6.7.8',
+    pending_ip_count: 1,
+    ddns_enabled: '1',
+    ddns_domain: 'node-a.example.com',
+    ddns_record_type: 'A'
+  };
+  const db = makeIpMonitorDb(serverRow, sys);
+  const env = { API_SECRET: 'secret', DB: db };
+  const token = await generateToken(env, sys);
+
+  // Admin edit rejects ddns_enabled=1 without domain
+  const missingDomainRes = await handleAdminAPI(new Request('https://example.com/admin/api', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      action: 'edit',
+      id: serverRow.id,
+      name: 'Node-A',
+      ddns_enabled: '1',
+      ddns_domain: ''
+    })
+  }), env, sys);
+  assert.equal(missingDomainRes.status, 400);
+  const missingDomainJson = await missingDomainRes.json();
+  assert.equal(missingDomainJson.error, 'ddnsDomainRequired');
+
+  // Admin edit rejects invalid domain
+  assert.equal(isValidDdnsDomain('not a domain!'), false);
+  const invalidDomainRes = await handleAdminAPI(new Request('https://example.com/admin/api', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      action: 'edit',
+      id: serverRow.id,
+      name: 'Node-A',
+      ddns_enabled: '1',
+      ddns_domain: 'bad_domain'
+    })
+  }), env, sys);
+  assert.equal(invalidDomainRes.status, 400);
+  assert.equal((await invalidDomainRes.json()).error, 'invalidDdnsDomain');
+
+  // Public /api/server strips IP tracking and DDNS fields
+  const publicRes = await handleServerAPI(
+    new Request(`https://example.com/api/server?id=${serverRow.id}`),
+    env,
+    sys
+  );
+  assert.equal(publicRes.status, 200);
+  const publicJson = await publicRes.json();
+  for (const field of ['last_ipv4', 'last_ipv6', 'pending_ip', 'pending_ip_count', 'ddns_enabled', 'ddns_domain', 'ddns_record_type']) {
+    assert.equal(field in publicJson, false, `${field} should not be exposed in public API`);
+  }
+});
